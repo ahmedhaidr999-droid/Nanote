@@ -19,8 +19,8 @@ android {
         applicationId = "com.nanote"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.0.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
     }
@@ -56,8 +56,13 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = true
-            isShrinkResources = true
+            // v1.0.1 hotfix: R8 minification is OFF until the on-device crash
+            // seen on Xiaomi Pad 6S Pro (v1.0.0) is root-caused via the built-in
+            // crash reporter. The 83-test suite runs against debug classes, so a
+            // release-only R8 issue would be invisible to it. Re-enable after
+            // v1.0.1 crash reports confirm the real cause (tracked for v1.0.2).
+            isMinifyEnabled = false
+            isShrinkResources = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             if (hasReleaseSigning) {
                 signingConfig = signingConfigs.getByName("release")

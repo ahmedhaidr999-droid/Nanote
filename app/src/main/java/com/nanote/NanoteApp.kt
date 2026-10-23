@@ -1,6 +1,7 @@
 package com.nanote
 
 import android.app.Application
+import com.nanote.core.CrashCatcher
 import com.nanote.data.repo.NotebookRepository
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
@@ -24,6 +25,12 @@ class NanoteApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // First line of business: catch any crash so the user can share the
+        // report on the next launch (no internet permission in this app).
+        try {
+            CrashCatcher.install(this)
+        } catch (_: Throwable) {
+        }
         appScope.launch {
             try {
                 repo.purgeExpiredTrash()

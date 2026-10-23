@@ -139,4 +139,9 @@
         <item quantity="many">تم تحديد %1$d عنصراً</item>
         <item quantity="other">تم تحديد %1$d عنصر</item>
     </plurals>
+    <!-- Crash report screen -->
+    <string name="crash_title">أُغلِق نانوت بشكل غير متوقع</string>
+    <string name="crash_body">حدث انهيار عند التشغيل السابق. يُرجى مشاركة هذا التقرير مع المطوّر لإصلاح المشكلة، أو اضغط إغلاق للمتابعة.</string>
+    <string name="crash_share">مشاركة التقرير</string>
+    <string name="crash_close">إغلاق والمتابعة</string>
 </resources>

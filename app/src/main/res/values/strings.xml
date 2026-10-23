@@ -136,4 +136,9 @@
         <item quantity="one">%1$d selected</item>
         <item quantity="other">%1$d selected</item>
     </plurals>
+    <!-- Crash report screen -->
+    <string name="crash_title">Nanote closed unexpectedly</string>
+    <string name="crash_body">The previous launch crashed. Please share this report with the developer so it can be fixed, or close to continue using the app.</string>
+    <string name="crash_share">Share report</string>
+    <string name="crash_close">Close and continue</string>
 </resources>

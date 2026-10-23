@@ -1,5 +1,6 @@
 package com.nanote
 
+import android.content.Intent
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.compose.setContent
@@ -12,10 +13,14 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.windowsizeclass.ExperimentalMaterial3WindowSizeClassApi
 import androidx.compose.material3.windowsizeclass.calculateWindowSizeClass
@@ -25,13 +30,17 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.compose.foundation.isSystemInDarkTheme
 import com.nanote.core.Brand
+import com.nanote.core.CrashCatcher
 import com.nanote.data.files.SettingsStore
 import com.nanote.data.files.ThemePref
 import com.nanote.ui.NanoteRoot
@@ -57,6 +66,13 @@ class MainActivity : AppCompatActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
 
+        var crashLog by mutableStateOf<String?>(null)
+        try {
+            crashLog = CrashCatcher.readLast(this)
+        } catch (_: Throwable) {
+            crashLog = null
+        }
+
         setContent {
             val themePref by settings.theme.collectAsState(initial = ThemePref.SYSTEM)
             val lockEnabled by settings.appLock.collectAsState(initial = false)
@@ -76,7 +92,27 @@ class MainActivity : AppCompatActivity() {
             }
 
             NanoteTheme(darkTheme = dark, dynamicColor = themePref == ThemePref.SYSTEM) {
-                if (lockEnabled && !alreadyUnlocked.value) {
+                val report = crashLog
+                if (report != null) {
+                    CrashReportScreen(
+                        report = report,
+                        onShare = {
+                            val intent = Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(
+                                    Intent.EXTRA_TEXT,
+                                    "Nanote crash report:\n\n$report"
+                                )
+                                putExtra(Intent.EXTRA_SUBJECT, "Nanote crash report")
+                            }
+                            startActivity(Intent.createChooser(intent, null))
+                        },
+                        onDismiss = {
+                            CrashCatcher.clear(this@MainActivity)
+                            crashLog = null
+                        }
+                    )
+                } else if (lockEnabled && !alreadyUnlocked.value) {
                     LockScreen(onUnlockClick = { showBiometricPrompt() })
                 } else {
                     NanoteRoot(windowSizeClass = calculateWindowSizeClass(this))
@@ -142,5 +178,47 @@ private fun LockScreen(onUnlockClick: () -> Unit) {
         Button(onClick = onUnlockClick) {
             Text(stringResource(R.string.app_unlock))
         }
+    }
+}
+
+/**
+ * Shown instead of the app when the previous launch crashed: the full report
+ * plus a share button, so the user can send the stack trace to the developer
+ * (the app has no internet permission — sharing uses the system share sheet).
+ */
+@Composable
+private fun CrashReportScreen(
+    report: String,
+    onShare: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Spacer(Modifier.height(16.dp))
+        Text(stringResource(R.string.crash_title), style = MaterialTheme.typography.headlineSmall)
+        Spacer(Modifier.height(8.dp))
+        Text(stringResource(R.string.crash_body), style = MaterialTheme.typography.bodyMedium)
+        Spacer(Modifier.height(16.dp))
+        Button(onClick = onShare, modifier = Modifier.fillMaxWidth()) {
+            Text(stringResource(R.string.crash_share))
+        }
+        Spacer(Modifier.height(8.dp))
+        OutlinedButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
+            Text(stringResource(R.string.crash_close))
+        }
+        Spacer(Modifier.height(16.dp))
+        Text(
+            report,
+            fontFamily = FontFamily.Monospace,
+            fontSize = 11.sp,
+            lineHeight = 14.sp,
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(Modifier.height(24.dp))
     }
 }
