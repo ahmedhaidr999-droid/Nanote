@@ -1,0 +1,97 @@
+name: Build Nanote APK
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build, test & release APK
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # required to publish the GitHub Release with APK assets
+
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle (caching + summary)
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Decode signing keystore from secrets
+        run: |
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 --decode > "$HOME/nanote-release.keystore"
+          echo "ANDROID_KEYSTORE_FILE=$HOME/nanote-release.keystore" >> "$GITHUB_ENV"
+          echo "ANDROID_KEYSTORE_PASSWORD=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" >> "$GITHUB_ENV"
+          echo "ANDROID_KEY_ALIAS=${{ secrets.ANDROID_KEY_ALIAS }}" >> "$GITHUB_ENV"
+          echo "ANDROID_KEY_PASSWORD=${{ secrets.ANDROID_KEY_PASSWORD }}" >> "$GITHUB_ENV"
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Build APKs (debug + signed release) & run unit tests
+        run: ./gradlew assembleDebug assembleRelease testDebugUnitTest lintDebug --stacktrace
+
+      - name: Verify release APK is actually signed
+        run: |
+          $ANDROID_HOME/build-tools/35.0.0/apksigner verify --print-certs \
+            app/build/outputs/apk/release/app-release.apk | tee signing-report.txt
+          echo "---- certificates above ----"
+          grep -q "CN=Nanote" signing-report.txt
+
+      - name: Rename APKs for distribution
+        id: apk
+        run: |
+          VERSION="${GITHUB_REF_NAME:-v1.0.0}"
+          cp app/build/outputs/apk/release/app-release.apk "Nanote-${VERSION}-release.apk"
+          cp app/build/outputs/apk/debug/app-debug.apk "Nanote-${VERSION}-debug.apk"
+          ls -la Nanote-*.apk
+
+      - name: Upload release APK (artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Nanote-release-APK
+          path: Nanote-*-release.apk
+          if-no-files-found: error
+
+      - name: Upload debug APK (artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Nanote-debug-APK
+          path: Nanote-*-debug.apk
+          if-no-files-found: error
+
+      - name: Publish GitHub Release with installable APKs (tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            Nanote-*-release.apk
+            Nanote-*-debug.apk
+          generate_release_notes: true
+          make_latest: true
+          body: |
+            # Nanote ${{ github.ref_name }}
+
+            **Nanote** — offline-first handwriting note-taking app for Android
+            (stylus & finger), built with Kotlin + Jetpack Compose. No internet
+            permission, no accounts, no tracking.
+
+            ## Install
+            1. Download `Nanote-${{ github.ref_name }}-release.apk` below.
+            2. On your Android 8.0+ device, open the file (tap the download
+               notification or use a file manager).
+            3. Allow *Install unknown apps* for your browser/file manager when
+               prompted, then confirm Install.
+
+            The `release` APK is R8-optimized and signed — ready to install.
+            The `debug` APK is the test build with debugging enabled.

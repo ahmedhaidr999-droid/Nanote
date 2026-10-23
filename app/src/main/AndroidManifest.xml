@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!--
+      Nanote is a local-first, offline-only app: it declares NO permissions.
+      SAF (ACTION_OPEN_DOCUMENT / ACTION_CREATE_DOCUMENT) and the photo picker
+      need no runtime permissions. The only uses-permission below is a strip:
+      it actively REMOVES INTERNET from the merged manifest in case a
+      transitive library ever tries to add it (enforced by Gradle tasks
+      `checkManifestNoInternet` / `scanApkNoInternet*` and by a Robolectric
+      test on the merged manifest).
+    -->
+    <uses-permission
+        android:name="android.permission.INTERNET"
+        tools:node="remove" />
+
+    <!-- Works on Chromebooks / devices without a touchscreen. -->
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+    <uses-feature android:name="android.hardware.type.stylus" android:required="false" />
+
+    <application
+        android:name=".NanoteApp"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:enableOnBackInvokedCallback="true"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Nanote"
+        tools:targetApi="34">
+
+        <!--
+          Inking app: handle size/orientation/density changes in-place so the
+          canvas View (and its state) survives rotation and fold/unfold.
+        -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:windowSoftInputMode="adjustResize"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|density|uiMode">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Remember the user-selected app language (EN / AR / system) across restarts. -->
+        <service
+            android:name="androidx.appcompat.app.AppLocalesMetadataHolderService"
+            android:enabled="false"
+            android:exported="false">
+            <meta-data android:name="autoStoreLocales" android:value="true" />
+        </service>
+
+        <!-- Offline sharing of exported PDF/PNG/.nanote files (via the Share sheet). -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+    </application>
+</manifest>
