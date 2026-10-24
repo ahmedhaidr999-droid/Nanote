@@ -105,7 +105,6 @@ class ViewTransformTest {
         assertThat(vt.m.v[1]).isEqualTo(0f)
         assertThat(vt.m.v[3]).isEqualTo(0f)
     }
-}
 
     // ------------------------------------- v1.1: fit ALL PDF page sizes
 
@@ -148,3 +147,5 @@ class ViewTransformTest {
         vt.zoom(0.0001f, 0f, 0f)
         assertThat(vt.scale).isAtLeast(0.2499f)
     }
+
+}

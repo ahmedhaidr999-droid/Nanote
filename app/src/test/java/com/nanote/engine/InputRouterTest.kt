@@ -100,7 +100,6 @@ class InputRouterTest {
         val noMouseDraw = InputRouter(fingersDraw = { false })
         assertThat(noMouseDraw.route(pointer(ToolTypes.MOUSE, buttons = Buttons.PRIMARY))).isEqualTo(Route.NAVIGATE)
     }
-}
 
     // ------------------------------------------- v1.1 stylus-only mode
 
@@ -156,3 +155,5 @@ class InputRouterTest {
         val r2 = InputRouter(fingersDraw = { false }, barrelAction = { StylusBarrelAction.UNDO })
         assertThat(r2.route(pointer(ToolTypes.STYLUS))).isEqualTo(Route.DRAW)
     }
+
+}
