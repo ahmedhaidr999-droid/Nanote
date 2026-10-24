@@ -28,12 +28,10 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
-import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
-import androidx.navigation.navArgument
 import com.nanote.R
 import com.nanote.ui.editor.EditorScreen
 import com.nanote.ui.library.FavoritesScreen
@@ -92,6 +90,7 @@ fun NanoteRoot(windowSizeClass: WindowSizeClass) {
 
 private data class RootDestination(
     val route: String,
+    val clickRoute: String,
     val icon: ImageVector,
     val labelRes: Int
 )
@@ -103,7 +102,7 @@ private fun RootRailItems(navController: NavHostController, currentRoute: String
         val selected = currentRoute == dest.route
         NavigationRailItem(
             selected = selected,
-            onClick = { navController.navigateRoot(dest.route) },
+            onClick = { navController.navigateRoot(dest.clickRoute) },
             icon = { Icon(dest.icon, contentDescription = label) },
             label = { Text(label) },
             alwaysShowLabel = false
@@ -121,7 +120,7 @@ private fun androidx.compose.foundation.layout.RowScope.RootBarItems(
         val selected = currentRoute == dest.route
         NavigationBarItem(
             selected = selected,
-            onClick = { navController.navigateRoot(dest.route) },
+            onClick = { navController.navigateRoot(dest.clickRoute) },
             icon = { Icon(dest.icon, contentDescription = label) },
             label = { Text(label) }
         )
@@ -137,29 +136,29 @@ private fun NavHostController.navigateRoot(route: String) {
 }
 
 private fun destinations() = listOf(
-    RootDestination(Routes.LIBRARY, Icons.AutoMirrored.Outlined.LibraryBooks, R.string.nav_library),
-    RootDestination(Routes.FAVORITES, Icons.Outlined.Star, R.string.nav_favorites),
-    RootDestination(Routes.TRASH, Icons.Outlined.Delete, R.string.nav_trash),
-    RootDestination(Routes.SETTINGS, Icons.Outlined.Settings, R.string.nav_settings)
+    // clickRoute for Library is the bare base route — nav 2.8 optional query
+    // args take their (null) defaults, landing on the library root.
+    RootDestination(Routes.LIBRARY, Routes.LIBRARY_BASE, Icons.AutoMirrored.Outlined.LibraryBooks, R.string.nav_library),
+    RootDestination(Routes.FAVORITES, Routes.FAVORITES, Icons.Outlined.Star, R.string.nav_favorites),
+    RootDestination(Routes.TRASH, Routes.TRASH, Icons.Outlined.Delete, R.string.nav_trash),
+    RootDestination(Routes.SETTINGS, Routes.SETTINGS, Icons.Outlined.Settings, R.string.nav_settings)
 )
 
 @Composable
 private fun NanoteNavHost(navController: NavHostController) {
     NavHost(
         navController = navController,
-        startDestination = Routes.library(null)
+        // Query args are optional in nav 2.8: the bare base route resolves
+        // folderId to its declared (null) default. Never put a value in the
+        // start destination string — see Routes.LIBRARY_ARGS history.
+        startDestination = Routes.LIBRARY_BASE
     ) {
         composable(
             route = Routes.LIBRARY,
-            arguments = listOf(
-                navArgument(Routes.ARG_FOLDER) {
-                    type = NavType.StringType
-                    defaultValue = "null"
-                }
-            )
+            arguments = Routes.LIBRARY_ARGS
         ) { entry ->
             LibraryScreen(
-                folderId = entry.arguments?.getString(Routes.ARG_FOLDER)?.takeUnless { it == "null" },
+                folderId = entry.arguments?.getString(Routes.ARG_FOLDER),
                 onOpenNotebook = { notebookId ->
                     navController.navigate(Routes.editor(notebookId, "first"))
                 },

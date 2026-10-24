@@ -86,7 +86,7 @@ import java.util.Date
 fun LibraryScreen(
     folderId: String?,
     onOpenNotebook: (String) -> Unit,
-    onOpenFolder: (String) -> Unit,
+    onOpenFolder: (String?) -> Unit,
     vm: LibraryViewModel = hiltViewModel()
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -176,7 +176,7 @@ fun LibraryScreen(
                         if (crumbs.isNotEmpty()) {
                             IconButton(onClick = {
                                 val parent = crumbs.last().parentId
-                                onOpenFolder(parent ?: "null")
+                                onOpenFolder(parent)
                             }) {
                                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back_to_library))
                             }

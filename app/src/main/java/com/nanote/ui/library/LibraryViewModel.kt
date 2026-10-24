@@ -34,7 +34,9 @@ class LibraryViewModel @Inject constructor(
     private val recent: SettingsStore
 ) : ViewModel() {
 
-    val folderId: String? = savedStateHandle.get<String>("folderId")?.takeUnless { it == "null" }
+    // Nav arg is a genuine nullable String now (null = library root);
+    // no "null" string sentinel decoding anymore (see Routes.LIBRARY_ARGS).
+    val folderId: String? = savedStateHandle.get<String>("folderId")
 
     private val _sort = MutableStateFlow(SortOrder.MODIFIED)
     val sort: StateFlow<SortOrder> = _sort.asStateFlow()
