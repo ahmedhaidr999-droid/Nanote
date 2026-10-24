@@ -62,7 +62,7 @@ fun PageScrubber(
     val fraction = shownIndex / (pageCount - 1).toFloat()
     val density = LocalDensity.current
     val handlePx = with(density) { 22.dp.toPx() }
-    val handleYPx = ((trackHeightPx - handlePx).coerceAtLeast(0) * fraction).roundToInt()
+    val handleYPx = ((trackHeightPx - handlePx).coerceAtLeast(0f) * fraction).roundToInt()
 
     val cd = stringResource(R.string.page_scrubber)
 
