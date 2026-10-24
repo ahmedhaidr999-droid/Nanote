@@ -1,9 +1,13 @@
 package com.nanote.ui
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import com.nanote.ink.engine.EditorTool
 import com.nanote.ink.engine.ToolSpec
 import com.nanote.ui.editor.ToolPalette
@@ -29,16 +33,21 @@ class ToolPaletteUiTest {
         val current = androidx.compose.runtime.mutableStateOf(ToolSpec())
         compose.setContent {
             NanoteTheme {
-                ToolPalette(
-                    tool = current.value,
-                    fingersDraw = true,
-                    onTool = { t -> current.value = ToolSpec.withTool(current.value, t) },
-                    onPen = { p -> current.value = ToolSpec.withPen(current.value, p) },
-                    onColor = { c -> current.value = ToolSpec.withColor(current.value, c) },
-                    onWidth = { w -> current.value = ToolSpec.withWidth(current.value, w) },
-                    onFingersDraw = { },
-                    onShapeKind = { k -> current.value = current.value.copy(shapeKind = k) }
-                )
+                // Force a tablet-wide layout so the LazyRow composes ALL 8
+                // tool chips (Robolectric's default window would clip the last
+                // chip, and LazyRow only composes visible items).
+                Box(Modifier.requiredWidth(1100.dp)) {
+                    ToolPalette(
+                        tool = current.value,
+                        fingersDraw = true,
+                        onTool = { t -> current.value = ToolSpec.withTool(current.value, t) },
+                        onPen = { p -> current.value = ToolSpec.withPen(current.value, p) },
+                        onColor = { c -> current.value = ToolSpec.withColor(current.value, c) },
+                        onWidth = { w -> current.value = ToolSpec.withWidth(current.value, w) },
+                        onFingersDraw = { },
+                        onShapeKind = { k -> current.value = current.value.copy(shapeKind = k) }
+                    )
+                }
             }
         }
 
