@@ -45,6 +45,7 @@ class SettingsStore @Inject constructor(
         val STYLUS_BUTTON = stringPreferencesKey("stylus_button")
         val STYLUS_ONLY = booleanPreferencesKey("stylus_only")
         val TOOLBAR_POS = stringPreferencesKey("toolbar_position")
+        val PEN_RESPONSE = stringPreferencesKey("pen_response") // ultra/high/smooth
         val STYLUS_AUTO_CFG = booleanPreferencesKey("stylus_auto_cfg")
         val AUTOSAVE_MS = longPreferencesKey("autosave_ms")
         val APP_LOCK = booleanPreferencesKey("app_lock")
@@ -145,6 +146,22 @@ class SettingsStore @Inject constructor(
 
     suspend fun setToolbarPosition(pos: ToolbarPosition) {
         context.settingsStore.edit { it[Keys.TOOLBAR_POS] = pos.name.lowercase() }
+    }
+
+    /**
+     * v1.3: pen latency preset. ULTRA (default) feeds raw stylus samples to
+     * the canvas — maximum sensitivity, almost zero delay.
+     */
+    val penResponse: Flow<com.nanote.ink.engine.PenResponse> = prefs.map { p ->
+        when (p[Keys.PEN_RESPONSE]) {
+            "high" -> com.nanote.ink.engine.PenResponse.HIGH
+            "smooth" -> com.nanote.ink.engine.PenResponse.SMOOTH
+            else -> com.nanote.ink.engine.PenResponse.ULTRA
+        }
+    }
+
+    suspend fun setPenResponse(r: com.nanote.ink.engine.PenResponse) {
+        context.settingsStore.edit { it[Keys.PEN_RESPONSE] = r.name.lowercase() }
     }
 
     /** One-shot: auto-enables palm rejection when a known stylus tablet

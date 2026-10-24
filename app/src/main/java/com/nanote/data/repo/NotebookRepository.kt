@@ -412,10 +412,9 @@ class NotebookRepository @Inject constructor(
             val assetId = UUID.randomUUID().toString()
             val pdfName = "$assetId.pdf"
             pageStore.saveAsset(nbId, assetId, bytes, "pdf")
-            val provider = pdfAssetOpener(pageStore.assetFile(nbId, assetId, "pdf"))
-            val count = try {
+            // v1.3: use{} guarantees the engine closes on ANY failure path
+            val count = pdfAssetOpener(pageStore.assetFile(nbId, assetId, "pdf")).use { provider ->
                 provider.pageCount
-            } finally {
             }
             val now = System.currentTimeMillis()
             notebookDao.upsert(
@@ -425,18 +424,20 @@ class NotebookRepository @Inject constructor(
                     pdfAsset = pdfName, createdAt = now, updatedAt = now
                 )
             )
-            for (i in 0 until count) {
-                val (w, h) = provider.pageSizePts(i)
-                pageDao.upsert(
-                    PageEntity(
-                        id = UUID.randomUUID().toString(), notebookId = nbId,
-                        position = i, widthPt = w, heightPt = h,
-                        paper = "blank", bgArgb = 0xFFFFFFFF.toInt(),
-                        pdfPageIndex = i, updatedAt = now
+            // v1.3: sizes in one pass, single shared page handle per page
+            pdfAssetOpener(pageStore.assetFile(nbId, assetId, "pdf")).use { provider ->
+                for (i in 0 until count) {
+                    val (w, h) = provider.pageSizePts(i)
+                    pageDao.upsert(
+                        PageEntity(
+                            id = UUID.randomUUID().toString(), notebookId = nbId,
+                            position = i, widthPt = w, heightPt = h,
+                            paper = "blank", bgArgb = 0xFFFFFFFF.toInt(),
+                            pdfPageIndex = i, updatedAt = now
+                        )
                     )
-                )
+                }
             }
-            provider.close()
             Result.success(nbId)
         } catch (e: Exception) {
             Result.failure(e)

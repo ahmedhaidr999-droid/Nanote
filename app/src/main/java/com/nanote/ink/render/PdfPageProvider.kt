@@ -12,37 +12,71 @@ import java.io.IOException
 class PdfProtectedException(message: String) : IOException(message)
 
 /**
- * Platform PdfRenderer wrapper (spec 7): opens one page at a time. The
- * renderer is opened lazily ON THE CALLING THREAD — sessions use it strictly
- * from the tile render thread, imports from Dispatchers.IO, so no mutex is
- * needed in practice; the import flow closes its own instance.
+ * v1.3 PDF engine (rebuilt from the v1.2 wrapper):
+ *  - ONE instance can now be shared by every page session of a notebook
+ *    (previously each page opened its own PdfRenderer — slow page-to-page
+ *    browsing). All renderer access is synchronized, so the per-page tile
+ *    threads and the import thread can safely share it.
+ *  - The last opened page stays open (PdfRenderer allows exactly one), so
+ *    rendering consecutive tiles of the same page skips openPage churn.
+ *  - Corrupt files fail with a clear message instead of a raw IOException.
  */
 class PdfPageProvider(private val file: File) : Closeable {
 
-    private var renderer: PdfRenderer? = null
+    private val lock = Any()
 
-    private fun open(): PdfRenderer {
+    private var renderer: PdfRenderer? = null
+    private var openPageIndex = -1
+    private var openPage: PdfRenderer.Page? = null
+
+    /** Opens (once) and returns the renderer under [lock]. */
+    private fun openLocked(): PdfRenderer {
         renderer?.let { return it }
         if (!file.exists()) throw IOException("Missing PDF asset ${file.name}")
         val pfd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
-        return try {
-            PdfRenderer(pfd).also { renderer = it }
+        try {
+            return PdfRenderer(pfd).also { renderer = it }
         } catch (e: SecurityException) {
             pfd.close()
             throw PdfProtectedException("This PDF is password-protected")
+        } catch (e: IOException) {
+            pfd.close()
+            throw IOException("Cannot open '${file.name}' — the PDF is damaged or unsupported", e)
+        } catch (e: Exception) {
+            pfd.close()
+            throw IOException("Cannot open '${file.name}' as a PDF", e)
         }
     }
 
-    val pageCount: Int get() = open().pageCount
+    /** Page handle for [index], reusing the currently open page when possible. */
+    private fun pageLocked(index: Int): PdfRenderer.Page {
+        val r = openLocked()
+        openPage?.let {
+            if (openPageIndex == index) return it
+            closePageLocked()
+        }
+        return r.openPage(index).also {
+            openPage = it
+            openPageIndex = index
+        }
+    }
+
+    private fun closePageLocked() {
+        try {
+            openPage?.close()
+        } finally {
+            openPage = null
+            openPageIndex = -1
+        }
+    }
+
+    val pageCount: Int get() = synchronized(lock) { openLocked().pageCount }
 
     /** Page size in PDF points. */
     fun pageSizePts(index: Int): Pair<Float, Float> {
-        val r = open()
-        val page = r.openPage(index)
-        try {
+        synchronized(lock) {
+            val page = pageLocked(index)
             return page.width.toFloat() to page.height.toFloat()
-        } finally {
-            page.close()
         }
     }
 
@@ -58,38 +92,35 @@ class PdfPageProvider(private val file: File) : Closeable {
         pageTop: Float,
         out: Bitmap
     ) {
-        val r = open()
-        val page = r.openPage(index)
-        try {
+        synchronized(lock) {
+            val page = pageLocked(index)
             val m = Matrix()
             m.setScale(tileScale, tileScale)
             m.postTranslate(-pageLeft * tileScale, -pageTop * tileScale)
             page.render(out, null, m, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-        } finally {
-            page.close()
         }
     }
 
     /** Full-page bitmap at [widthPx] (white background), for export/thumbnails. */
     fun renderFull(index: Int, widthPx: Int, bgArgb: Int = 0xFFFFFFFF.toInt()): Bitmap {
-        val r = open()
-        val page = r.openPage(index)
-        try {
+        synchronized(lock) {
+            val page = pageLocked(index)
             val h = (widthPx * page.height / page.width.toFloat()).toInt().coerceAtLeast(1)
             val bmp = Bitmap.createBitmap(widthPx, h, Bitmap.Config.ARGB_8888)
             bmp.eraseColor(bgArgb)
             page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
             return bmp
-        } finally {
-            page.close()
         }
     }
 
     override fun close() {
-        try {
-            renderer?.close()
-        } finally {
-            renderer = null
+        synchronized(lock) {
+            closePageLocked()
+            try {
+                renderer?.close()
+            } finally {
+                renderer = null
+            }
         }
     }
 }

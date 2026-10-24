@@ -5,9 +5,10 @@ import kotlin.math.pow
 
 /**
  * Pressure lookup table: gamma curve so light pressure stays thin without
- * crushing the whole usable range.
+ * crushing the whole usable range. v1.3: exponent 0.8 -> 0.65 (max pen
+ * sensitivity) — the lightest touches grow visible width sooner.
  */
-val PRESSURE_LUT = FloatArray(256) { (it / 255f).pow(0.8f) }
+val PRESSURE_LUT = FloatArray(256) { (it / 255f).pow(0.65f) }
 
 /**
  * Per-point width of a stroke in page points:

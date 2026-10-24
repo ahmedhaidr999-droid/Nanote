@@ -130,6 +130,12 @@
     <!-- v1.1: قلم التظليل المستقل، موضع شريط الأدوات، وضع القلم فقط، قاعدة بيانات الأقلام -->
     <string name="tool_highlighter">قلم التظليل</string>
     <string name="stylus_only">القلم فقط (راحة اليد)</string>
+    <!-- v1.3: مؤشر الانتقال السريع، أقصى استجابة للقلم، محرك PDF -->
+    <string name="page_scrubber">مؤشر الانتقال السريع بين الصفحات — اسحب للقفز بينها</string>
+    <string name="pen_response_title">سرعة استجابة القلم</string>
+    <string name="pen_response_ultra">فورية (بدون تأخير)</string>
+    <string name="pen_response_high">عالية</string>
+    <string name="pen_response_smooth">ناعمة</string>
     <string name="toolbar_position">موضع شريط الأدوات</string>
     <string name="pos_top">أعلى</string>
     <string name="pos_bottom">أسفل</string>

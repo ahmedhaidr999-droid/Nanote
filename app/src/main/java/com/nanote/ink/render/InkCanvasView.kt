@@ -212,8 +212,13 @@ class InkCanvasView @JvmOverloads constructor(
     private var liveFrozenCount = 0
     private var liveDirty = Bounds()
     private var lastLiveMoveMs = 0L
-    private val filterX = com.nanote.ink.engine.OneEuro()
-    private val filterY = com.nanote.ink.engine.OneEuro()
+    // v1.3: null filter = raw passthrough (ULTRA pen response, zero latency)
+    private var filterX: com.nanote.ink.engine.OneEuro? = com.nanote.ink.engine.OneEuro()
+    private var filterY: com.nanote.ink.engine.OneEuro? = com.nanote.ink.engine.OneEuro()
+    private var liveWidthFollow = 0.35f
+
+    /** v1.3: pen latency preset — ULTRA (raw) by default per user request. */
+    var penResponse: com.nanote.ink.engine.PenResponse = com.nanote.ink.engine.PenResponse.ULTRA
 
     // ----- routing state -----
     private val routes = SparseArray<Route>()
@@ -469,6 +474,22 @@ class InkCanvasView @JvmOverloads constructor(
             onActivePageChanged?.invoke(idx)
             if (h == null) onPageNeedsLoad?.invoke(idx)
         }
+    }
+
+    /** v1.3 quick page scrubber: instantly centers page [index] (no animation). */
+    fun jumpToPage(index: Int) {
+        val slot = stripSlots.getOrNull(index) ?: return
+        scroller.forceFinished(true)
+        centerAnimator?.cancel()
+        zoomAnimator?.cancel()
+        val vh = height.toFloat()
+        if (vh <= 0f) return
+        val target = vh / 2f - (slot.topPt + slot.heightPt / 2f) * stripScale
+        stripOffY = PageStripLayout.clampOffsetY(target, stripScale, stripTotalH, vh)
+        clampStrip()
+        pushTransforms()
+        setActiveIndex(index, notify = true)
+        invalidate()
     }
 
     /** Animates the strip so page [index] lands centered (sidebar taps). */
@@ -1388,12 +1409,18 @@ class InkCanvasView @JvmOverloads constructor(
         liveDownTime = e.eventTime
         lastLiveMoveMs = e.eventTime
         drawingPointerId = e.getPointerId(i)
+        // v1.3: per-stroke filter from the latency preset (ULTRA = raw)
+        val preset = penResponse
+        filterX = preset.newFilter()
+        filterY = preset.newFilter()
+        liveWidthFollow = preset.widthFollow
         frozenPath.rewind()
         livePath.rewind()
-        filterX.reset()
-        filterY.reset()
         liveDirty.reset()
         addLivePoint(e.getX(i), e.getY(i), e.getPressure(i), e.eventTime, h)
+        // v1.3: paint the very first dot the SAME frame the pen lands —
+        // previously nothing repainted until the first MOVE (~1 frame delay).
+        if (liveActive) invalidate()
     }
 
     private fun addLivePoint(sx: Float, sy: Float, pressure: Float, timeMs: Long, h: Host) {
@@ -1403,8 +1430,8 @@ class InkCanvasView @JvmOverloads constructor(
 
         val spec = specOf(livePen)
         val dt = maxOf(timeMs - liveDownTime, 1L)
-        val fx = filterX.apply(pagePoint[0], dt / 1000f)
-        val fy = filterY.apply(pagePoint[1], dt / 1000f)
+        val fx = filterX?.apply(pagePoint[0], dt / 1000f) ?: pagePoint[0]
+        val fy = filterY?.apply(pagePoint[1], dt / 1000f) ?: pagePoint[1]
 
         val pr = com.nanote.ink.engine.PRESSURE_LUT[(pressure.coerceIn(0f, 1f) * 255f).toInt()]
         val speed = if (liveCount == 0) 0f else {
@@ -1415,7 +1442,7 @@ class InkCanvasView @JvmOverloads constructor(
         }
         val thin = 1f - spec.speedThin * (speed / 1500f).coerceIn(0f, 1f)
         val target = liveBaseWidth * (spec.minScale + (spec.maxScale - spec.minScale) * pr) * thin
-        liveWidth += 0.35f * (target - liveWidth)
+        liveWidth += liveWidthFollow * (target - liveWidth)
 
         val idx = liveCount * STRIDE
         livePts[idx] = fx

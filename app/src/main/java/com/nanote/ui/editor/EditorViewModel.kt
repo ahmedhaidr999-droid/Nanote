@@ -101,6 +101,10 @@ class EditorViewModel @Inject constructor(
     val toolbarPosition: StateFlow<ToolbarPosition> = recent.toolbarPosition
         .stateIn(viewModelScope, SharingStarted.Eagerly, ToolbarPosition.TOP)
 
+    /** v1.3: pen latency preset (ULTRA = raw input, ~zero delay by default). */
+    val penResponse: StateFlow<com.nanote.ink.engine.PenResponse> = recent.penResponse
+        .stateIn(viewModelScope, SharingStarted.Eagerly, com.nanote.ink.engine.PenResponse.ULTRA)
+
     /** v1.1: barrel-button action consumed by the input router. */
     @Volatile private var barrelAction: com.nanote.ink.engine.StylusBarrelAction =
         com.nanote.ink.engine.StylusBarrelAction.ERASE
@@ -165,9 +169,6 @@ class EditorViewModel @Inject constructor(
         override val hiddenStrokeIds: MutableSet<Int> = HashSet()
         override val hiddenObjectIds: MutableSet<String> = HashSet()
 
-        /** PDF provider opened lazily on the tile render thread (thread-confined). */
-        var pdfProvider: com.nanote.ink.render.PdfPageProvider? = null
-
         /** v1.2: PDF pages open fit-to-PAGE (the whole page visible). */
         override val isPdfPage: Boolean get() = page.pdfPageIndex != null
 
@@ -226,6 +227,9 @@ class EditorViewModel @Inject constructor(
     /** Sessions of the loaded window (±WINDOW around the active page), by page id. */
     private val sessions = LinkedHashMap<String, PageSession>()
 
+    /** v1.3: ONE PDF engine per notebook, shared by all page sessions. */
+    @Volatile private var sharedPdf: com.nanote.ink.render.PdfPageProvider? = null
+
     private val _strip = MutableStateFlow<StripState?>(null)
     val strip: StateFlow<StripState?> = _strip.asStateFlow()
 
@@ -262,16 +266,17 @@ class EditorViewModel @Inject constructor(
             }
         )
 
-        // PDF background: lazily open the provider on the tile thread
+        // v1.3 PDF engine: ONE shared, thread-safe provider per notebook —
+        // swiping between PDF pages no longer reopens the file per page.
         if (page.pdfPageIndex != null) {
             val assetName = repo.pdfAssetName(notebookId)
             if (assetName != null) {
                 val parts = assetName.split('.')
                 val pdfFile = pageStore.assetFile(notebookId, parts[0], parts.getOrNull(1) ?: "pdf")
+                val provider = sharedPdf ?: com.nanote.ink.render.PdfPageProvider(pdfFile)
+                    .also { sharedPdf = it }
                 s.tileCache.pdfPageIndex = page.pdfPageIndex
                 s.tileCache.pdfTileDraw = { idx, ts, l, t, out ->
-                    val provider = s.pdfProvider ?: com.nanote.ink.render.PdfPageProvider(pdfFile)
-                        .also { s.pdfProvider = it }
                     provider.renderTile(idx, ts, l, t, out)
                 }
             }
@@ -371,6 +376,28 @@ class EditorViewModel @Inject constructor(
                 windowCenter = c
                 activateSession(id, c)
                 publishStrip(list, c, centerOn = c)
+            } else {
+                rebuildWindow(c, refit = false, centerOn = c)
+            }
+        }
+    }
+
+    /**
+     * v1.3 quick scrubber: jump straight to a page with NO animation so the
+     * handle tracks the finger 1:1 while dragging. In-window pages center
+     * instantly; out-of-window pages rebuild the session window centered.
+     */
+    fun jumpToPage(index: Int) {
+        viewModelScope.launch {
+            val list = repo.pagesOf(notebookId)
+            if (list.isEmpty()) return@launch
+            val c = index.coerceIn(0, list.size - 1)
+            val id = list[c].id
+            if (sessions[id] != null) {
+                windowCenter = c
+                activateSession(id, c)
+                canvasView?.jumpToPage(c)
+                slideWindow(c)
             } else {
                 rebuildWindow(c, refit = false, centerOn = c)
             }
@@ -873,6 +900,8 @@ class EditorViewModel @Inject constructor(
     override fun onCleared() {
         saveNowAndClose()
         sessions.values.forEach { it.tileCache.close() }
+        sharedPdf?.close()
+        sharedPdf = null
         super.onCleared()
     }
 }

@@ -91,6 +91,7 @@ fun EditorScreen(
     val fingersDraw by vm.fingersDraw.collectAsState()
     val stylusOnly by vm.stylusOnly.collectAsState()
     val toolbarPos by vm.toolbarPosition.collectAsState()
+    val penResponse by vm.penResponse.collectAsState()
     val undoDepth by vm.undoDepth.collectAsState()
     val redoDepth by vm.redoDepth.collectAsState()
     val session = vm.session
@@ -198,6 +199,7 @@ fun EditorScreen(
                         update = { v ->
                             viewRef.value = v
                             vm.canvasView = v
+                            v.penResponse = penResponse
                             stripState?.let { v.setStrip(it) }
                         },
                         modifier = Modifier.fillMaxSize()
@@ -324,6 +326,22 @@ fun EditorScreen(
                             }
                         }
                     }
+                }
+
+                // v1.3 quick page scrubber — fast jump between pages by dragging
+                if (session != null && pages.size > 1 && !focusMode) {
+                    PageScrubber(
+                        pageCount = pages.size,
+                        pageIndex = pageIndex,
+                        onJump = { vm.jumpToPage(it) },
+                        modifier = Modifier
+                            .align(Alignment.CenterEnd)
+                            .padding(
+                                end = if (toolbarPos == ToolbarPosition.RIGHT) 64.dp else 0.dp,
+                                top = 100.dp,
+                                bottom = 24.dp
+                            )
+                    )
                 }
 
                 // selection contextual bar

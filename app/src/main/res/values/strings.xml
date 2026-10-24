@@ -135,6 +135,12 @@
     <!-- v1.1: separated highlighter, toolbar position, pen-only mode, stylus database -->
     <string name="tool_highlighter">Highlighter</string>
     <string name="stylus_only">Pen only (palm rejection)</string>
+    <!-- v1.3: quick page scrubber, max pen response, PDF engine -->
+    <string name="page_scrubber">Quick page navigation — drag to jump between pages</string>
+    <string name="pen_response_title">Pen response speed</string>
+    <string name="pen_response_ultra">Instant (no delay)</string>
+    <string name="pen_response_high">High</string>
+    <string name="pen_response_smooth">Smooth</string>
     <string name="toolbar_position">Toolbar position</string>
     <string name="pos_top">Top</string>
     <string name="pos_bottom">Bottom</string>

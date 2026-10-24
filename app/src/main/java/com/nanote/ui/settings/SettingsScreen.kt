@@ -72,6 +72,7 @@ class SettingsViewModel @Inject constructor(
     val stylusButton = settings.stylusButton.stateIn(viewModelScope, SharingStarted.Eagerly, StylusBarrelAction.ERASE)
     val stylusOnly = settings.stylusOnly.stateIn(viewModelScope, SharingStarted.Eagerly, false)
     val toolbarPosition = settings.toolbarPosition.stateIn(viewModelScope, SharingStarted.Eagerly, ToolbarPosition.TOP)
+    val penResponse = settings.penResponse.stateIn(viewModelScope, SharingStarted.Eagerly, com.nanote.ink.engine.PenResponse.ULTRA)
     val detectedStylus = StylusRegistry.detectForThisDevice()
     val autosaveMs = settings.autosaveMs.stateIn(viewModelScope, SharingStarted.Eagerly, 1500L)
     val appLock = settings.appLock.stateIn(viewModelScope, SharingStarted.Eagerly, false)
@@ -91,6 +92,7 @@ class SettingsViewModel @Inject constructor(
     fun setStylusButton(a: StylusBarrelAction) = viewModelScope.launch { settings.setStylusButton(a) }
     fun setStylusOnly(v: Boolean) = viewModelScope.launch { settings.setStylusOnly(v) }
     fun setToolbarPosition(p: ToolbarPosition) = viewModelScope.launch { settings.setToolbarPosition(p) }
+    fun setPenResponse(r: com.nanote.ink.engine.PenResponse) = viewModelScope.launch { settings.setPenResponse(r) }
     fun setAutosave(ms: Long) = viewModelScope.launch { settings.setAutosaveMs(ms) }
     fun setAppLock(v: Boolean) = viewModelScope.launch { settings.setAppLock(v) }
     fun setDefaultPaper(p: String) = viewModelScope.launch { settings.setDefaultPaper(p) }
@@ -130,6 +132,7 @@ fun SettingsScreen(vm: SettingsViewModel = hiltViewModel()) {
     val stylusButton by vm.stylusButton.collectAsState()
     val stylusOnly by vm.stylusOnly.collectAsState()
     val toolbarPosition by vm.toolbarPosition.collectAsState()
+    val penResponse by vm.penResponse.collectAsState()
     val autosave by vm.autosaveMs.collectAsState()
     val appLock by vm.appLock.collectAsState()
     val lastBackup by vm.lastBackup.collectAsState()
@@ -211,6 +214,20 @@ fun SettingsScreen(vm: SettingsViewModel = hiltViewModel()) {
                 }
                 ChoiceChip(stringResource(R.string.pos_right), toolbarPosition == ToolbarPosition.RIGHT) {
                     vm.setToolbarPosition(ToolbarPosition.RIGHT)
+                }
+            }
+
+            // ---- pen response / latency (v1.3)
+            SectionLabel(stringResource(R.string.pen_response_title))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                ChoiceChip(stringResource(R.string.pen_response_ultra), penResponse == com.nanote.ink.engine.PenResponse.ULTRA) {
+                    vm.setPenResponse(com.nanote.ink.engine.PenResponse.ULTRA)
+                }
+                ChoiceChip(stringResource(R.string.pen_response_high), penResponse == com.nanote.ink.engine.PenResponse.HIGH) {
+                    vm.setPenResponse(com.nanote.ink.engine.PenResponse.HIGH)
+                }
+                ChoiceChip(stringResource(R.string.pen_response_smooth), penResponse == com.nanote.ink.engine.PenResponse.SMOOTH) {
+                    vm.setPenResponse(com.nanote.ink.engine.PenResponse.SMOOTH)
                 }
             }
 
