@@ -5,6 +5,7 @@ import com.nanote.ink.engine.Buttons
 import com.nanote.ink.engine.InputRouter
 import com.nanote.ink.engine.PointerSpec
 import com.nanote.ink.engine.Route
+import com.nanote.ink.engine.StylusBarrelAction
 import com.nanote.ink.engine.ToolTypes
 import org.junit.Test
 

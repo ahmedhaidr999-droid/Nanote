@@ -822,6 +822,8 @@ class InkCanvasView @JvmOverloads constructor(
         when (route) {
             Route.DRAW -> if (id == drawingPointerId) endStroke(e.eventTime, h)
             Route.ERASE -> if (id == erasingPointerId) endEraseGesture(h)
+            Route.LASSO -> Unit // barrel-lasso: capture continues; ends on final UP
+            Route.COMMAND -> Unit // one-shot command already fired on DOWN
             Route.NAVIGATE -> {
                 navPointerCount--
                 if (navPointerCount <= 1) {
@@ -914,6 +916,8 @@ class InkCanvasView @JvmOverloads constructor(
         when (route) {
             Route.DRAW -> if (canceled) cancelStroke(h) else if (id == drawingPointerId) endStroke(e.eventTime, h)
             Route.ERASE -> if (id == erasingPointerId) endEraseGesture(h)
+            Route.LASSO -> Unit // handled by finishLassoCapture above
+            Route.COMMAND -> Unit
             Route.NAVIGATE -> {
                 if (navPointerCount == 1) {
                     lastTapUpMs = e.eventTime

@@ -254,7 +254,7 @@ fun SettingsScreen(vm: SettingsViewModel = hiltViewModel()) {
 
             // ---- stylus database (v1.1)
             SectionLabel(stringResource(R.string.stylus_section))
-            val pen = detectedStylus
+            val pen = vm.detectedStylus
             if (pen != null) {
                 Text(
                     stringResource(R.string.stylus_detected, pen.name),
