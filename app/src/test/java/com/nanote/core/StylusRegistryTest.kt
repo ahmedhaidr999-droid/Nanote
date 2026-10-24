@@ -36,7 +36,7 @@ class StylusRegistryTest {
     }
 
     @Test
-    fun `detects Chromebooks as USI 2.0`() {
+    fun `detects Chromebooks as USI 2 stylus`() {
         val pen = StylusRegistry.detect("acer", "Acer Chromebook Spin 511", "vorticon")
         assertThat(pen).isNotNull()
         assertThat(pen!!.id).isEqualTo("usi_2")
