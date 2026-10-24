@@ -139,6 +139,17 @@ class LibraryViewModel @Inject constructor(
         }
     }
 
+    // ------------------- v1.2 folder long-press: rename / delete
+
+    fun renameFolder(id: String, name: String) = viewModelScope.launch {
+        repo.renameFolder(id, name)
+    }
+
+    /** Soft-deletes the folder tree; restorable from Trash for 30 days. */
+    fun trashFolder(id: String) = viewModelScope.launch {
+        repo.trashFolders(listOf(id))
+    }
+
     // ------------------------------------------------------- imports (M4)
 
     fun importPdf(bytes: ByteArray, displayName: String, onDone: (String?) -> Unit) {

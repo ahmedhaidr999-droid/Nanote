@@ -94,6 +94,7 @@ fun EditorScreen(
     val undoDepth by vm.undoDepth.collectAsState()
     val redoDepth by vm.redoDepth.collectAsState()
     val session = vm.session
+    val stripState by vm.strip.collectAsState()
     val pageThumbs by vm.pageThumbs.collectAsState()
     val showTextComposer by vm.showTextComposer.collectAsState()
     val urlOpen by vm.urlOpenEvent.collectAsState()
@@ -188,14 +189,16 @@ fun EditorScreen(
                             InkCanvasView(ctx).also { v ->
                                 viewRef.value = v
                                 vm.canvasView = v
-                                v.attach(session)
+                                // v1.2 strip callbacks: scroll made a page active /
+                                // the pen landed on a not-yet-loaded page
+                                v.onActivePageChanged = { idx -> vm.onViewportActiveChanged(idx) }
+                                v.onPageNeedsLoad = { idx -> vm.onViewportActiveChanged(idx) }
                             }
                         },
                         update = { v ->
                             viewRef.value = v
                             vm.canvasView = v
-                            if (v.host == null) v.attach(session)
-                            v.refitViewportIfNeeded()
+                            stripState?.let { v.setStrip(it) }
                         },
                         modifier = Modifier.fillMaxSize()
                     )

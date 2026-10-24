@@ -101,35 +101,40 @@ class InputRouterTest {
         assertThat(noMouseDraw.route(pointer(ToolTypes.MOUSE, buttons = Buttons.PRIMARY))).isEqualTo(Route.NAVIGATE)
     }
 
-    // ------------------------------------------- v1.1 stylus-only mode
+    // ------------------------------------------- v1.1/v1.2 stylus-only mode
 
     @Test
-    fun `stylus-only mode blocks finger writing and single-finger pans`() {
+    fun `stylus-only mode scrolls with one clean finger but never writes`() {
         val r = InputRouter(fingersDraw = { true }, stylusOnly = { true })
-        // single finger (the classic palm silhouette) is fully ignored
-        assertThat(r.route(pointer(ToolTypes.FINGER))).isEqualTo(Route.IGNORE)
-        // two small contacts still navigate (deliberate pinch) with the pen up
-        assertThat(r.route(pointer(ToolTypes.FINGER, pointers = 2))).isEqualTo(Route.NAVIGATE)
-        // palm-sized contact never navigates
-        assertThat(r.route(pointer(ToolTypes.FINGER, touchMajor = 60f, pointers = 2)))
+        // single clean finger scrolls the strip (Notewise-style browsing)
+        assertThat(r.route(pointer(ToolTypes.FINGER, time = 99_000L))).isEqualTo(Route.NAVIGATE)
+        // two small contacts pinch-zoom with the pen up
+        assertThat(r.route(pointer(ToolTypes.FINGER, time = 99_100L, pointers = 2))).isEqualTo(Route.NAVIGATE)
+        // palm-sized contact never scrolls
+        assertThat(r.route(pointer(ToolTypes.FINGER, time = 99_200L, touchMajor = 60f)))
             .isEqualTo(Route.IGNORE)
         // the stylus keeps drawing — pen-only WRITING, not pen-only app
-        assertThat(r.route(pointer(ToolTypes.STYLUS))).isEqualTo(Route.DRAW)
+        assertThat(r.route(pointer(ToolTypes.STYLUS, time = 99_300L))).isEqualTo(Route.DRAW)
     }
 
     @Test
-    fun `stylus-only silences two-finger pan while the pen is down`() {
+    fun `stylus-only silences fingers while the pen is down`() {
         val r = InputRouter(fingersDraw = { true }, stylusOnly = { true })
         r.onStylusDownChanged(true, 10_000L)
         assertThat(
             r.route(pointer(ToolTypes.FINGER, time = 10_050L, pointers = 2, touchMajor = 10f))
+        ).isEqualTo(Route.IGNORE)
+        assertThat(
+            r.route(pointer(ToolTypes.FINGER, time = 10_100L, pointers = 1, touchMajor = 10f))
         ).isEqualTo(Route.IGNORE)
     }
 
     @Test
     fun `stylus-only overrides the fingers-draw toggle`() {
         val r = InputRouter(fingersDraw = { true }, stylusOnly = { true })
-        assertThat(r.route(pointer(ToolTypes.FINGER, time = 99_000L))).isEqualTo(Route.IGNORE)
+        // even with "fingers draw" enabled the finger never WRITES in pen-only
+        // mode — it scrolls instead (time far from any stylus activity)
+        assertThat(r.route(pointer(ToolTypes.FINGER, time = 99_000L))).isEqualTo(Route.NAVIGATE)
     }
 
     // ---------------------------------------- v1.1 barrel-button actions

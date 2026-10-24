@@ -24,6 +24,7 @@ import com.nanote.ink.engine.AddObjects
 import com.nanote.ink.engine.EditorTool
 import com.nanote.ink.engine.History
 import com.nanote.ink.engine.PageDoc
+import com.nanote.ink.engine.PageStripLayout
 import com.nanote.ink.engine.PenType
 import com.nanote.ink.engine.Stroke
 import com.nanote.ink.engine.ToolSpec
@@ -31,6 +32,8 @@ import com.nanote.ink.engine.ViewTransform
 import com.nanote.ink.render.InkCanvasView
 import com.nanote.ink.render.InkTileCache
 import com.nanote.ink.render.PageSnapshot
+import com.nanote.ink.render.StripSlot
+import com.nanote.ink.render.StripState
 import com.nanote.ink.render.ThumbRenderer
 import com.nanote.ui.library.ThumbLoader
 import android.graphics.Bitmap
@@ -69,6 +72,11 @@ class EditorViewModel @Inject constructor(
 
     val notebookId: String = savedStateHandle.get<String>("notebookId").orEmpty()
     private val requestedPageId: String = savedStateHandle.get<String>("pageId") ?: "first"
+
+    private companion object {
+        /** v1.2: sessions kept live around the active page (±WINDOW). */
+        const val WINDOW = 2
+    }
 
     val title: StateFlow<String> = repo.observeNotebook(notebookId)
         .map { it?.title ?: "" }
@@ -134,6 +142,17 @@ class EditorViewModel @Inject constructor(
     var session: PageSession? = null
         private set
 
+    /**
+     * v1.2: which page owns the pending text composer / image insert — the
+     * composer is opened THROUGH a page session, so the tapped page (which
+     * may be a strip neighbor, not the center page) receives the object.
+     */
+    private var textComposerSession: PageSession? = null
+    private var imageSession: PageSession? = null
+
+    /** v1.2: last page that received an edit (undo targets it). */
+    @Volatile private var lastEdited: PageSession? = null
+
     /** Editing state of one page; implements the canvas Host. */
     inner class PageSession(
         val page: Page,
@@ -148,6 +167,9 @@ class EditorViewModel @Inject constructor(
 
         /** PDF provider opened lazily on the tile render thread (thread-confined). */
         var pdfProvider: com.nanote.ink.render.PdfPageProvider? = null
+
+        /** v1.2: PDF pages open fit-to-PAGE (the whole page visible). */
+        override val isPdfPage: Boolean get() = page.pdfPageIndex != null
 
         override fun tool(): ToolSpec = _tool.value
         override fun fingersDraw(): Boolean = _fingersDraw.value
@@ -166,7 +188,7 @@ class EditorViewModel @Inject constructor(
         }
 
         override fun onContentCommitted() {
-            markDirty()
+            markDirty(this)
         }
 
         override fun onViewportOrContentMayHaveChanged() {
@@ -174,12 +196,14 @@ class EditorViewModel @Inject constructor(
         }
 
         override fun onTapForText(pageX: Float, pageY: Float) {
+            textComposerSession = this
             this@EditorViewModel.textComposerX = pageX
             this@EditorViewModel.textComposerY = pageY
             showTextComposer.value = true
         }
 
         override fun onTapForImage(pageX: Float, pageY: Float) {
+            imageSession = this
             this@EditorViewModel.imageTargetX = pageX
             this@EditorViewModel.imageTargetY = pageY
             imagePickerRequest.value++
@@ -197,66 +221,169 @@ class EditorViewModel @Inject constructor(
         }
     }
 
+    // -------------------------------------------------- v1.2 page window
+
+    /** Sessions of the loaded window (±WINDOW around the active page), by page id. */
+    private val sessions = LinkedHashMap<String, PageSession>()
+
+    private val _strip = MutableStateFlow<StripState?>(null)
+    val strip: StateFlow<StripState?> = _strip.asStateFlow()
+
+    private var windowCenter = -1
+    private var fitToken = 0L
+    private var windowJob: Job? = null
+    private var openedInitial = false
+
     fun openInitialPage() {
-        if (session != null) return
+        if (openedInitial) return
+        openedInitial = true
         viewModelScope.launch {
             recent.touchNotebook(notebookId)
             val list = repo.pagesOf(notebookId)
+            if (list.isEmpty()) return@launch
             val idx = list.indexOfFirst { it.id == requestedPageId }.takeIf { it >= 0 } ?: 0
-            openPageAt(idx.coerceIn(0, list.size - 1))
+            rebuildWindow(idx.coerceIn(0, list.size - 1), refit = true, centerOn = -1)
         }
     }
 
+    /** Loads a page session (no-op when already in the window). */
+    private suspend fun loadSession(page: Page): PageSession {
+        sessions[page.id]?.let { return it }
+        val loaded = withContext(io) { pageStore.load(notebookId, page.id) }
+        val doc = PageDoc(page.widthPt, page.heightPt, loaded.strokes)
+        doc.objects.addAll(loaded.objects)
+        val s = PageSession(
+            page = page,
+            doc = doc,
+            history = History(),
+            transform = ViewTransform(),
+            tileCache = InkTileCache(page.widthPt, page.heightPt, page.paper, page.bgArgb).apply {
+                snapshotProvider = { PageSnapshot(doc.strokesSnapshot(), doc.objectsSnapshot(), doc.revision) }
+            }
+        )
+
+        // PDF background: lazily open the provider on the tile thread
+        if (page.pdfPageIndex != null) {
+            val assetName = repo.pdfAssetName(notebookId)
+            if (assetName != null) {
+                val parts = assetName.split('.')
+                val pdfFile = pageStore.assetFile(notebookId, parts[0], parts.getOrNull(1) ?: "pdf")
+                s.tileCache.pdfPageIndex = page.pdfPageIndex
+                s.tileCache.pdfTileDraw = { idx, ts, l, t, out ->
+                    val provider = s.pdfProvider ?: com.nanote.ink.render.PdfPageProvider(pdfFile)
+                        .also { s.pdfProvider = it }
+                    provider.renderTile(idx, ts, l, t, out)
+                }
+            }
+        }
+        sessions[page.id] = s
+        return s
+    }
+
+    /** Full window rebuild: flush + close everything, reload ±WINDOW around [center]. */
+    private fun rebuildWindow(center: Int, refit: Boolean, centerOn: Int) {
+        windowJob?.cancel()
+        windowJob = viewModelScope.launch {
+            val list = repo.pagesOf(notebookId)
+            if (list.isEmpty()) {
+                _strip.value = null
+                return@launch
+            }
+            val c = center.coerceIn(0, list.size - 1)
+            val jobs = sessions.values.map { flushSave(it) }
+            jobs.forEach { it?.join() }
+            sessions.values.forEach { it.tileCache.close() }
+            sessions.clear()
+            for (i in (c - WINDOW).coerceAtLeast(0)..(c + WINDOW).coerceAtMost(list.size - 1)) {
+                loadSession(list[i])
+            }
+            windowCenter = c
+            if (refit) fitToken++
+            activateSession(list[c].id, c)
+            publishStrip(list, c, centerOn)
+            refreshTick.value++
+        }
+    }
+
+    /** Slides the window when scrolling made another page active. */
+    private fun slideWindow(newActive: Int) {
+        if (windowJob?.isActive == true) return
+        windowJob = viewModelScope.launch {
+            val list = repo.pagesOf(notebookId)
+            if (list.isEmpty()) return@launch
+            val c = newActive.coerceIn(0, list.size - 1)
+            // close sessions 3+ pages away (invisible); flush first
+            val keep = ((c - WINDOW - 1).coerceAtLeast(0)..(c + WINDOW + 1).coerceAtMost(list.size - 1))
+                .map { list[it].id }.toSet()
+            val stale = sessions.keys.filter { it !in keep }
+            for (sid in stale) {
+                flushSave(sessions[sid])
+                sessions.remove(sid)?.tileCache?.close()
+            }
+            var changed = stale.isNotEmpty()
+            for (i in (c - WINDOW).coerceAtLeast(0)..(c + WINDOW).coerceAtMost(list.size - 1)) {
+                val id = list[i].id
+                if (sessions[id] == null) {
+                    loadSession(list[i])
+                    changed = true
+                }
+            }
+            windowCenter = c
+            activateSession(list[c].id, c)
+            if (changed) publishStrip(list, c, -1)
+        }
+    }
+
+    private fun activateSession(pageId: String, idx: Int) {
+        val s = sessions[pageId] ?: return
+        session = s
+        pageIndex.value = idx
+    }
+
+    private fun publishStrip(list: List<Page>, activeIdx: Int, centerOn: Int) {
+        val layout = PageStripLayout.layout(list.map { it.widthPt to it.heightPt })
+        val total = PageStripLayout.totalHeightPt(layout)
+        val slots = layout.map { l ->
+            StripSlot(l.index, l.topPt, l.leftPt, l.widthPt, l.heightPt, sessions[list[l.index].id])
+        }
+        _strip.value = StripState(slots, activeIdx, total, fitToken, centerOn)
+    }
+
+    /** Viewport center moved to another page while scrolling (view callback). */
+    fun onViewportActiveChanged(index: Int) {
+        val list = pagesFlow.value
+        if (list.isEmpty() || index !in list.indices) return
+        if (index == pageIndex.value && index == windowCenter &&
+            sessions[list[index].id] != null
+        ) return
+        activateSession(list[index].id, index)
+        slideWindow(index)
+    }
+
+    /** Opens a page: in-window -> animate to it; otherwise rebuild the window. */
     fun openPageAt(index: Int) {
         viewModelScope.launch {
             val list = repo.pagesOf(notebookId)
             if (list.isEmpty()) return@launch
-            val clamped = index.coerceIn(0, list.size - 1)
-            val previous = session
-            if (previous != null && previous.page.id == list[clamped].id) {
-                pageIndex.value = clamped
-                return@launch
+            val c = index.coerceIn(0, list.size - 1)
+            val id = list[c].id
+            if (sessions[id] != null) {
+                windowCenter = c
+                activateSession(id, c)
+                publishStrip(list, c, centerOn = c)
+            } else {
+                rebuildWindow(c, refit = false, centerOn = c)
             }
-            flushSave(previous)
-            session?.tileCache?.close()
-            val page = list[clamped]
-            pageIndex.value = clamped
-            val loaded = withContext(io) { pageStore.load(notebookId, page.id) }
-            val doc = PageDoc(page.widthPt, page.heightPt, loaded.strokes)
-            doc.objects.addAll(loaded.objects)
-            val s = PageSession(
-                page = page,
-                doc = doc,
-                history = History(),
-                transform = ViewTransform(),
-                tileCache = InkTileCache(page.widthPt, page.heightPt, page.paper, page.bgArgb).apply {
-                    snapshotProvider = { PageSnapshot(doc.strokesSnapshot(), doc.objectsSnapshot(), doc.revision) }
-                }
-            )
-            session = s
-
-            // PDF background: lazily open the provider on the tile thread
-            if (page.pdfPageIndex != null) {
-                val assetName = repo.pdfAssetName(notebookId)
-                if (assetName != null) {
-                    val parts = assetName.split('.')
-                    val pdfFile = pageStore.assetFile(notebookId, parts[0], parts.getOrNull(1) ?: "pdf")
-                    s.tileCache.pdfPageIndex = page.pdfPageIndex
-                    s.tileCache.pdfTileDraw = { idx, ts, l, t, out ->
-                        val provider = s.pdfProvider ?: com.nanote.ink.render.PdfPageProvider(pdfFile)
-                            .also { s.pdfProvider = it }
-                        provider.renderTile(idx, ts, l, t, out)
-                    }
-                }
-            }
-            refreshTick.value++
         }
     }
 
     fun addPageAndOpen() {
         viewModelScope.launch {
             repo.addPage(notebookId)
-            openPageAt(pagesFlow.value.size)
+            val list = repo.pagesOf(notebookId)
+            if (list.isEmpty()) return@launch
+            val last = list.size - 1
+            rebuildWindow(last, refit = false, centerOn = last)
         }
     }
 
@@ -265,7 +392,9 @@ class EditorViewModel @Inject constructor(
             val s = session ?: return@launch
             flushSave(s)
             repo.duplicatePage(s.page.id)
-            openPageAt(pageIndex.value + 1)
+            val list = repo.pagesOf(notebookId)
+            val to = (pageIndex.value + 1).coerceAtMost(list.size - 1)
+            rebuildWindow(to, refit = false, centerOn = to)
         }
     }
 
@@ -275,7 +404,15 @@ class EditorViewModel @Inject constructor(
             val idx = pageIndex.value
             val ok = repo.deletePage(notebookId, s.page.id)
             if (ok) {
-                openPageAt((idx - 1).coerceAtLeast(0))
+                flushSave(s)
+                sessions.remove(s.page.id)?.tileCache?.close()
+                val list = repo.pagesOf(notebookId)
+                if (list.isEmpty()) {
+                    _strip.value = null
+                    return@launch
+                }
+                val to = (idx - 1).coerceAtLeast(0).coerceAtMost(list.size - 1)
+                rebuildWindow(to, refit = false, centerOn = to)
             }
         }
     }
@@ -293,7 +430,7 @@ class EditorViewModel @Inject constructor(
             ids.removeAt(idx)
             ids.add(to, s.page.id)
             repo.reorderPages(notebookId, ids)
-            openPageAt(to)
+            rebuildWindow(to, refit = false, centerOn = to)
         }
     }
 
@@ -302,7 +439,7 @@ class EditorViewModel @Inject constructor(
             val s = session ?: return@launch
             flushSave(s)
             repo.setPagePaper(s.page.id, paper, bgArgb)
-            openPageAt(pageIndex.value)
+            rebuildWindow(pageIndex.value, refit = true, centerOn = -1)
         }
     }
 
@@ -312,7 +449,7 @@ class EditorViewModel @Inject constructor(
             flushSave(s)
             val (w, h) = PAGE_SIZES_PT.getValue(size)
             repo.resizePage(s.page.id, w, h)
-            openPageAt(pageIndex.value)
+            rebuildWindow(pageIndex.value, refit = true, centerOn = -1)
         }
     }
 
@@ -365,6 +502,7 @@ class EditorViewModel @Inject constructor(
     fun dismissTextComposer() {
         showTextComposer.value = false
         composerLinkTarget = ""
+        textComposerSession = null
     }
 
     fun consumeUrlEvent() {
@@ -380,7 +518,8 @@ class EditorViewModel @Inject constructor(
     }
 
     fun commitText(text: String, fontPt: Float, colorArgb: Int, linkTarget: String) {
-        val s = session ?: return
+        val s = textComposerSession ?: session ?: return
+        textComposerSession = null
         showTextComposer.value = false
         if (text.isBlank() && linkTarget.isBlank()) return
         val id = java.util.UUID.randomUUID().toString()
@@ -414,12 +553,13 @@ class EditorViewModel @Inject constructor(
             )
             s.history.push(AddObjects(listOf(linkObj)), s.doc)
         }
-        markDirty()
+        markDirty(s)
     }
 
     /** Called by the screen after the photo picker returns a stream. */
     fun addImageAtTarget(bytes: ByteArray, ext: String) {
-        val s = session ?: return
+        val s = imageSession ?: session ?: return
+        imageSession = null
         viewModelScope.launch {
             val assetId = java.util.UUID.randomUUID().toString()
             withContext(io) {
@@ -451,7 +591,7 @@ class EditorViewModel @Inject constructor(
                 heightPt = hPt
             )
             s.history.push(AddObjects(listOf(obj)), s.doc)
-            markDirty()
+            markDirty(s)
         }
     }
 
@@ -469,8 +609,9 @@ class EditorViewModel @Inject constructor(
     }
 
     fun pasteClipboard() {
-        val s = session ?: return
         val v = canvasView ?: return
+        // v1.2: paste lands on the page owning the selection (maybe a neighbor)
+        val s = (v.selectionHost() as? PageSession) ?: session ?: return
         if (clipboard.isEmpty()) return
         val copies = clipboard.map {
             it.transformed(
@@ -480,17 +621,22 @@ class EditorViewModel @Inject constructor(
         }
         s.history.push(com.nanote.ink.engine.AddStrokes(copies), s.doc)
         v.clearSelectionOnly()
-        markDirty()
+        markDirty(s)
     }
 
     fun deleteSelection() {
         canvasView?.deleteSelection()
-        markDirty()
+        markDirtySessionIfAny()
     }
 
     fun recolorSelection(argb: Int) {
         canvasView?.recolorSelection(argb)
-        markDirty()
+        markDirtySessionIfAny()
+    }
+
+    private fun markDirtySessionIfAny() {
+        val target = (canvasView?.selectionHost() as? PageSession) ?: lastEdited ?: session
+        if (target != null) markDirty(target)
     }
 
     fun finishSelection() {
@@ -646,24 +792,38 @@ class EditorViewModel @Inject constructor(
 
     // ----------------------------------------------------------- undo/redo
 
+    /** Undo targets the last edited page while it is still nearby. */
+    private fun undoTarget(): PageSession? {
+        val le = lastEdited
+        val act = session
+        if (le != null && le.history.depth > 0 && act != null) {
+            val actPage = act.page.id
+            val editedStillNear = sessions[le.page.id] != null
+            if (editedStillNear || le.page.id == actPage) return le
+        }
+        if (le != null && act == null) return le
+        return act
+    }
+
     fun undo() {
-        val s = session ?: return
+        val s = undoTarget() ?: return
         s.history.undo(s.doc)
-        syncUndoFlags()
-        markDirty()
+        syncUndoFlagsFor(s)
+        flushSave(s)
         refreshTick.value++
+        canvasView?.invalidate()
     }
 
     fun redo() {
-        val s = session ?: return
+        val s = undoTarget() ?: return
         s.history.redo(s.doc)
-        syncUndoFlags()
-        markDirty()
+        syncUndoFlagsFor(s)
+        flushSave(s)
         refreshTick.value++
+        canvasView?.invalidate()
     }
 
-    private fun syncUndoFlags() {
-        val s = session ?: return
+    private fun syncUndoFlagsFor(s: PageSession) {
         undoDepth.value = s.history.depth
         redoDepth.value = if (s.history.canRedo) 1 else 0
     }
@@ -673,12 +833,13 @@ class EditorViewModel @Inject constructor(
     private var dirtyTick = 0L
     private var autosaveJob: Job? = null
 
-    private fun markDirty() {
-        syncUndoFlags()
+    private fun markDirty(s: PageSession) {
+        lastEdited = s
+        syncUndoFlagsFor(s)
         autosaveJob?.cancel()
         autosaveJob = viewModelScope.launch {
             delay(1500) // debounce 1.5 s after the last change (spec 5)
-            flushSave(session)
+            flushSave(s)
         }
     }
 
@@ -703,14 +864,15 @@ class EditorViewModel @Inject constructor(
         }
     }
 
-    /** Full flush before leaving (also called from ON_STOP). */
+    /** Full flush before leaving (also called from ON_STOP): all sessions. */
     fun saveNowAndClose() {
+        for (s in sessions.values) flushSave(s)
         flushSave(session)
     }
 
     override fun onCleared() {
         saveNowAndClose()
-        session?.tileCache?.close()
+        sessions.values.forEach { it.tileCache.close() }
         super.onCleared()
     }
 }

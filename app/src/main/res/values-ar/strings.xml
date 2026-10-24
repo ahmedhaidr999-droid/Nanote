@@ -36,6 +36,10 @@
     <string name="folder_chip">📂</string>
     <string name="action_cancel">إلغاء</string>
     <string name="action_rename">إعادة تسمية</string>
+    <string name="folder_options">خيارات المجلد</string>
+    <string name="rename_folder_title">إعادة تسمية المجلد</string>
+    <string name="delete_folder_title">حذف المجلد؟</string>
+    <string name="delete_folder_text">سينقل المجلد وكل ما بداخله إلى سلة المحذوفات ويُحذف نهائياً بعد 30 يوماً.</string>
     <string name="action_duplicate">تكرار</string>
     <string name="action_pin">تثبيت</string>
     <string name="action_more">المزيد</string>

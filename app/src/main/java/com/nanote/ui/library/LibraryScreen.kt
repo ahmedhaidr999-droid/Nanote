@@ -71,6 +71,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.nanote.R
+import com.nanote.domain.model.Folder
 import com.nanote.domain.model.Notebook
 import com.nanote.domain.model.SortOrder
 import java.text.DateFormat
@@ -136,6 +137,11 @@ fun LibraryScreen(
     var moveTarget by remember { mutableStateOf<Notebook?>(null) }
     var deleteTarget by remember { mutableStateOf<Notebook?>(null) }
     var searchActive by remember { mutableStateOf(false) }
+
+    // v1.2: long-press folder -> rename / delete options
+    var folderMenuTarget by remember { mutableStateOf<Folder?>(null) }
+    var renameFolderTarget by remember { mutableStateOf<Folder?>(null) }
+    var deleteFolderTarget by remember { mutableStateOf<Folder?>(null) }
 
     val folderVm: FolderListViewModel = hiltViewModel()
 
@@ -305,7 +311,10 @@ fun LibraryScreen(
                             Surface(
                                 shape = RoundedCornerShape(50),
                                 color = MaterialTheme.colorScheme.secondaryContainer,
-                                onClick = { onOpenFolder(f.id) }
+                                modifier = Modifier.combinedClickable(
+                                    onClick = { onOpenFolder(f.id) },
+                                    onLongClick = { folderMenuTarget = f }
+                                )
                             ) {
                                 Text(
                                     stringResource(R.string.folder_chip) + " " + f.name,
@@ -423,6 +432,64 @@ fun LibraryScreen(
             },
             dismissButton = {
                 TextButton(onClick = { deleteTarget = null }) { Text(stringResource(R.string.action_cancel)) }
+            }
+        )
+    }
+
+    // v1.2: folder long-press menu -> Rename / Delete
+    folderMenuTarget?.let { f ->
+        AlertDialog(
+            onDismissRequest = { folderMenuTarget = null },
+            title = { Text(stringResource(R.string.folder_options)) },
+            text = { Text(f.name) },
+            confirmButton = {
+                TextButton(onClick = {
+                    renameFolderTarget = f
+                    folderMenuTarget = null
+                }) { Text(stringResource(R.string.action_rename)) }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    deleteFolderTarget = f
+                    folderMenuTarget = null
+                }) { Text(stringResource(R.string.action_delete)) }
+            }
+        )
+    }
+
+    renameFolderTarget?.let { f ->
+        var name by remember(f.id) { mutableStateOf(f.name) }
+        AlertDialog(
+            onDismissRequest = { renameFolderTarget = null },
+            title = { Text(stringResource(R.string.rename_folder_title)) },
+            text = {
+                OutlinedTextField(value = name, onValueChange = { name = it }, singleLine = true)
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    vm.renameFolder(f.id, name.trim().ifBlank { f.name })
+                    renameFolderTarget = null
+                }) { Text(stringResource(R.string.ok)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { renameFolderTarget = null }) { Text(stringResource(R.string.action_cancel)) }
+            }
+        )
+    }
+
+    deleteFolderTarget?.let { f ->
+        AlertDialog(
+            onDismissRequest = { deleteFolderTarget = null },
+            title = { Text(stringResource(R.string.delete_folder_title)) },
+            text = { Text(stringResource(R.string.delete_folder_text)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    vm.trashFolder(f.id)
+                    deleteFolderTarget = null
+                }) { Text(stringResource(R.string.action_delete)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteFolderTarget = null }) { Text(stringResource(R.string.action_cancel)) }
             }
         )
     }

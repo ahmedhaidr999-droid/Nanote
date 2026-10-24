@@ -44,11 +44,13 @@ enum class Route { DRAW, ERASE, NAVIGATE, IGNORE, LASSO, COMMAND }
 enum class StylusBarrelAction { ERASE, LASSO, UNDO, REDO, DISABLED }
 
 /**
- * Routing rules (per spec section 6.1, extended in v1.1):
+ * Routing rules (per spec section 6.1, extended in v1.1/v1.2):
  *  - eraser tool                     -> ERASE
  *  - stylus (barrel button, per action) -> ERASE / LASSO / COMMAND / DRAW
  *  - stylus                          -> DRAW
- *  - stylus-only mode ON             -> every finger/palm pointer is IGNOREd
+ *  - stylus-only mode ON             -> fingers never WRITE; a clean finger
+ *    with the pen at rest SCROLLS (NAVIGATE, Notewise-style), palm-sized
+ *    contacts and any finger while the pen writes/hovers stay IGNOREd
  *  - palm                            -> IGNORE
  *  - contact patch larger than palmMajorPx -> IGNORE
  *  - finger within 350 ms of stylus  -> IGNORE (palm lands as the pen lifts)
@@ -60,7 +62,7 @@ enum class StylusBarrelAction { ERASE, LASSO, UNDO, REDO, DISABLED }
 class InputRouter(
     private val fingersDraw: () -> Boolean,
     private val palmMajorPx: Float = 30f,
-    /** v1.1: total palm rejection — the screen accepts the stylus only. */
+    /** v1.1: palm rejection — only the stylus WRITES; clean fingers still scroll. */
     private val stylusOnly: () -> Boolean = { false },
     /** v1.1: user-customizable barrel button action. */
     private val barrelAction: () -> StylusBarrelAction = { StylusBarrelAction.ERASE }
@@ -100,13 +102,16 @@ class InputRouter(
             ToolTypes.PALM -> Route.IGNORE
             ToolTypes.FINGER ->
                 when {
-                    // v1.1 pen-only mode: fingers never WRITE. A single finger
-                    // (the classic palm silhouette) is ignored outright; only a
-                    // deliberate two-finger pinch of small contacts still pans
-                    // and zooms — and only while the pen is lifted.
+                    // v1.2 pen-only mode: fingers never WRITE, but a clean
+                    // finger with the pen at rest still SCROLLS the page strip
+                    // (vertical browsing + pinch). Palm silhouettes and any
+                    // finger while the pen is down/hovering stay IGNOREd.
                     stylusOnly() ->
-                        if (!stylusDown && e.pointerCount >= 2 && e.touchMajor <= palmMajorPx)
-                            Route.NAVIGATE else Route.IGNORE
+                        when {
+                            stylusActive -> Route.IGNORE
+                            e.touchMajor > palmMajorPx -> Route.IGNORE
+                            else -> Route.NAVIGATE
+                        }
                     stylusActive -> Route.IGNORE
                     e.touchMajor > palmMajorPx -> Route.IGNORE
                     fingersDraw() && e.pointerCount == 1 -> Route.DRAW

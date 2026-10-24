@@ -41,6 +41,10 @@
     <string name="folder_chip">📂</string>
     <string name="action_cancel">Cancel</string>
     <string name="action_rename">Rename</string>
+    <string name="folder_options">Folder options</string>
+    <string name="rename_folder_title">Rename folder</string>
+    <string name="delete_folder_title">Delete folder?</string>
+    <string name="delete_folder_text">The folder and everything inside it will be moved to Trash and permanently deleted after 30 days.</string>
     <string name="action_duplicate">Duplicate</string>
     <string name="action_pin">Pin</string>
     <string name="action_more">More</string>

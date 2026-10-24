@@ -15,6 +15,7 @@ import android.util.SparseArray
 import android.view.MotionEvent
 import android.view.View
 import android.view.animation.DecelerateInterpolator
+import android.widget.OverScroller
 import com.nanote.domain.model.ImageObj
 import com.nanote.domain.model.LinkObj
 import com.nanote.domain.model.PageObject
@@ -26,12 +27,14 @@ import com.nanote.ink.engine.History
 import com.nanote.ink.engine.InputRouter
 import com.nanote.ink.engine.Mat3
 import com.nanote.ink.engine.PageDoc
+import com.nanote.ink.engine.PageStripLayout
 import com.nanote.ink.engine.PenSpec
 import com.nanote.ink.engine.PointerSpec
 import com.nanote.ink.engine.RemoveObjects
 import com.nanote.ink.engine.ReplaceObject
 import com.nanote.ink.engine.ReplaceStrokes
 import com.nanote.ink.engine.Route
+import com.nanote.ink.engine.StripGeom
 import com.nanote.ink.engine.Stroke
 import com.nanote.ink.engine.ToolSpec
 import com.nanote.ink.engine.ToolTypes
@@ -46,12 +49,36 @@ import com.nanote.ink.engine.specOf
 import com.nanote.ink.engine.STRIDE
 import com.nanote.ink.input.GestureController
 import java.util.concurrent.Executors
+import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.hypot
 import kotlin.math.pow
 
 /**
- * The drawing surface (spec 2/6/7). M3 tool set:
+ * One page of the continuous vertical strip as seen by the canvas. [host] is
+ * null for pages the ViewModel has not loaded into the window yet.
+ */
+class StripSlot(
+    override val index: Int,
+    override val topPt: Float,
+    val leftPt: Float,
+    val widthPt: Float,
+    override val heightPt: Float,
+    val host: InkCanvasView.Host?
+) : StripGeom
+
+/** Strip state published by the editor ViewModel. */
+class StripState(
+    val slots: List<StripSlot>,
+    val activeIndex: Int,
+    val totalH: Float,
+    val fitToken: Long,
+    /** >= 0 -> animate the viewport so this page lands centered. */
+    val centerOn: Int
+)
+
+/**
+ * The drawing surface (spec 2/6/7 + v1.2 continuous strip). M3 tool set:
  *  - pens + hold-to-snap shape recognition (pure geometry)
  *  - shapes tool (line/arrow/rect/ellipse/triangle/diamond/star) with live preview
  *  - whole-stroke eraser AND pixel eraser (live fragment preview, one undo step)
@@ -59,6 +86,12 @@ import kotlin.math.pow
  *    matrix, committed on release), copy/paste/delete/recolor
  *  - text and image objects with drag-to-move; eraser removes them (undoable)
  *  - laser pointer with a fading trail (never saved)
+ *
+ * v1.2 (Notewise-style browsing): all pages live in one continuous vertical
+ * strip. One finger scrolls, two fingers pinch-zoom, a flick flings, the
+ * pen writes on whichever page it lands. The strip transform is owned here
+ * (stripScale/stripOffX/stripOffY); each loaded page's ViewTransform is a
+ * derived local matrix pushed from it.
  *
  * Touch pipeline per spec 6.1: unbuffered dispatch, historical samples first,
  * screen->page via inverse matrix, ACTION_CANCEL discards. Zero allocations
@@ -80,7 +113,10 @@ class InkCanvasView @JvmOverloads constructor(
         fun fingersDraw(): Boolean
         fun surfaceColor(): Int
 
-        /** v1.1: full palm rejection — canvas accepts the stylus only. */
+        /** v1.2: PDF-backed pages open fit-to-PAGE (whole page visible). */
+        val isPdfPage: Boolean get() = false
+
+        /** v1.1: palm rejection — only the stylus WRITES (fingers still scroll). */
         fun stylusOnly(): Boolean
 
         /** v1.1: user-customizable stylus barrel-button action. */
@@ -191,6 +227,14 @@ class InkCanvasView @JvmOverloads constructor(
     private var drawingPointerId = -1
     private var erasingPointerId = -1
 
+    // per-gesture OWNER hosts (v1.2: a gesture may target any loaded page)
+    private var liveHost: Host? = null
+    private var eraseHost: Host? = null
+    private var shapeHost: Host? = null
+    private var dragHost: Host? = null
+    private var laserHost: Host? = null
+    private var lassoHost: Host? = null
+
     // whole-stroke erase gesture
     private val erasedThisGesture = ArrayList<Stroke>()
     private var eraseX = Float.NaN
@@ -249,17 +293,81 @@ class InkCanvasView @JvmOverloads constructor(
     private var lastTapX = 0f
     private var lastTapY = 0f
     private var zoomAnimator: ValueAnimator? = null
-
-    private var fittedPageW = 0f
-    private var fittedPageH = 0f
+    private var centerAnimator: ValueAnimator? = null
 
     private val tileRect = Rect()
     private val lassoCornerScratch = FloatArray(8)
 
+    // ------------------------------------------------- v1.2 strip state
+    private var stripSlots: List<StripSlot> = emptyList()
+    private var stripTotalH = 0f
+    private var stripFitToken = -1L
+    private var lastStripState: StripState? = null
+    private var stripScale = 1f
+    private var stripOffX = 0f
+    private var stripOffY = 0f
+    private var stripMinScale = 0.25f
+    private var activeIndex = 0
+    private var fittedVw = 0f
+    private var fittedVh = 0f
+
+    /** Viewport-center page changed during scrolling (index). */
+    var onActivePageChanged: ((Int) -> Unit)? = null
+
+    /** The pen landed on a page that is not loaded yet — ask for a load. */
+    var onPageNeedsLoad: ((Int) -> Unit)? = null
+
+    private val scroller = OverScroller(context)
+    private val navT = LongArray(NAV_TRACK_N)
+    private val navXs = FloatArray(NAV_TRACK_N)
+    private val navYs = FloatArray(NAV_TRACK_N)
+    private var navN = 0
+    private var navPos = 0
+    private var flingLastY = 0
+
     fun attach(h: Host) {
         host = h
-        h.tileCache.onTileReadyCallback = { info ->
-            val t = h.transform
+        installTileCallback(h.transform, h.tileCache)
+        invalidate()
+        // Objects are drawn by the view every frame; tiles carry paper + ink only.
+    }
+
+    fun detach() {
+        host = null
+        zoomAnimator?.cancel()
+        centerAnimator?.cancel()
+        scroller.forceFinished(true)
+        ioExecutor.shutdownNow()
+    }
+
+    /**
+     * Publishes the full page strip. [state] comes from the ViewModel;
+     * identical instances are ignored so Compose recomposition is free.
+     * A NEW fitToken refits the viewport (open / page-settings change);
+     * window slides keep the token and therefore keep the user's pan/zoom.
+     */
+    fun setStrip(state: StripState) {
+        if (state === lastStripState) return
+        lastStripState = state
+        val refit = state.fitToken != stripFitToken ||
+            width.toFloat() != fittedVw || height.toFloat() != fittedVh
+        stripSlots = state.slots
+        stripTotalH = state.totalH
+        stripFitToken = state.fitToken
+        scroller.forceFinished(true)
+        centerAnimator?.cancel()
+        for (s in state.slots) {
+            s.host?.let { installTileCallback(it.transform, it.tileCache) }
+        }
+        setActiveIndex(state.activeIndex, notify = false)
+        recomputeFloor()
+        if (refit) refitStrip() else pushTransforms()
+        if (state.centerOn >= 0) animateCenterPage(state.centerOn)
+        invalidate()
+    }
+
+    private fun installTileCallback(t: ViewTransform, cache: InkTileCache) {
+        cache.onTileReadyCallback = { info ->
             val ts = 2.0.pow(info.bucket / 2.0).toFloat()
             val k = t.scale / ts
             val size = (InkTileCache.TILE_PX * k).toInt()
@@ -269,184 +377,318 @@ class InkCanvasView @JvmOverloads constructor(
             tileRect.offset(t.transX.toInt(), t.transY.toInt())
             invalidate(tileRect)
         }
-        invalidate()
-        // Objects are drawn by the view every frame; tiles carry paper + ink only.
     }
 
-    fun detach() {
-        host = null
-        zoomAnimator?.cancel()
-        ioExecutor.shutdownNow()
+    /** Derives every loaded page's local matrix from the strip transform. */
+    private fun pushTransforms() {
+        val s = stripScale
+        for (slot in stripSlots) {
+            val h = slot.host ?: continue
+            h.transform.setScaleTranslate(
+                s,
+                stripOffX + slot.leftPt * s,
+                stripOffY + slot.topPt * s
+            )
+        }
+    }
+
+    /** Zoom-out floor: the largest page in the notebook can still fit on screen. */
+    private fun recomputeFloor() {
+        var floor = 0.25f
+        val vw = width.toFloat()
+        val vh = height.toFloat()
+        if (vw > 0f && vh > 0f) {
+            for (slot in stripSlots) {
+                val fit = minOf(
+                    vw / maxOf(slot.widthPt, 1f),
+                    vh / maxOf(slot.heightPt, 1f)
+                )
+                if (fit < floor) floor = fit
+            }
+        }
+        stripMinScale = floor
+    }
+
+    /**
+     * Fits the ACTIVE page (PDF pages fit-to-page so the whole page is
+     * visible; plain paper fits to width as before) and syncs the strip.
+     */
+    private fun refitStrip() {
+        if (stripSlots.isEmpty() || width <= 0 || height <= 0) return
+        fittedVw = width.toFloat()
+        fittedVh = height.toFloat()
+        recomputeFloor()
+        var slot = stripSlots.getOrNull(activeIndex)
+        if (slot == null || slot.host == null) slot = stripSlots.firstOrNull { it.host != null }
+        if (slot == null) return
+        val h = slot.host ?: return
+        val t = h.transform
+        val vw = fittedVw
+        val vh = fittedVh
+        if (h.isPdfPage) {
+            t.fitToPage(slot.widthPt, slot.heightPt, vw, vh)
+        } else {
+            t.fitToWidth(slot.widthPt, slot.heightPt, vw, vh)
+        }
+        stripScale = t.scale
+        stripOffX = t.transX - slot.leftPt * stripScale
+        stripOffY = t.transY - slot.topPt * stripScale
+        clampStrip()
+        pushTransforms()
+        updateActiveFromViewport(notify = false)
+    }
+
+    private fun clampStrip() {
+        val a = stripSlots.getOrNull(activeIndex)
+        stripOffY = PageStripLayout.clampOffsetY(
+            stripOffY, stripScale, stripTotalH, height.toFloat()
+        )
+        if (a != null) {
+            stripOffX = PageStripLayout.clampOffsetX(
+                stripOffX, stripScale, a.leftPt, a.widthPt, width.toFloat()
+            )
+        }
+    }
+
+    /** Active page = the page under the viewport CENTER; notifies the VM. */
+    private fun updateActiveFromViewport(notify: Boolean) {
+        if (stripSlots.isEmpty()) return
+        val stripY = (height / 2f - stripOffY) / stripScale
+        val idx = PageStripLayout.indexAt(stripSlots, stripY)
+        if (idx < 0) return
+        if (idx != activeIndex || host == null) {
+            setActiveIndex(idx, notify)
+        }
+    }
+
+    private fun setActiveIndex(idx: Int, notify: Boolean) {
+        activeIndex = idx
+        val h = stripSlots.getOrNull(idx)?.host
+        host = h
+        if (notify) {
+            onActivePageChanged?.invoke(idx)
+            if (h == null) onPageNeedsLoad?.invoke(idx)
+        }
+    }
+
+    /** Animates the strip so page [index] lands centered (sidebar taps). */
+    private fun animateCenterPage(index: Int) {
+        val slot = stripSlots.getOrNull(index) ?: return
+        scroller.forceFinished(true)
+        val vh = height.toFloat()
+        val target = vh / 2f - (slot.topPt + slot.heightPt / 2f) * stripScale
+        val y0 = stripOffY
+        val y1 = PageStripLayout.clampOffsetY(target, stripScale, stripTotalH, vh)
+        if (abs(y1 - y0) < 1f) {
+            stripOffY = y1
+            clampStrip()
+            pushTransforms()
+            updateActiveFromViewport(notify = true)
+            invalidate()
+            return
+        }
+        centerAnimator?.cancel()
+        val anim = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 260
+            interpolator = DecelerateInterpolator()
+            addUpdateListener { a ->
+                stripOffY = y0 + (y1 - y0) * a.animatedFraction
+                clampStrip()
+                pushTransforms()
+                updateActiveFromViewport(notify = true)
+                invalidate()
+            }
+        }
+        centerAnimator = anim
+        anim.start()
+    }
+
+    /** The loaded page slot under a screen point (nearest page if in a gap). */
+    private fun slotAt(sx: Float, sy: Float): StripSlot? {
+        val slots = stripSlots
+        if (slots.isEmpty()) return null
+        val stripY = (sy - stripOffY) / stripScale
+        val idx = PageStripLayout.indexAt(slots, stripY)
+        return slots.getOrNull(idx)
+    }
+
+    private fun slotIntersectsViewport(s: StripSlot, vw: Float, vh: Float): Boolean {
+        val top = stripOffY + s.topPt * stripScale
+        if (top > vh + 64f) return false
+        if (top + s.heightPt * stripScale < -64f) return false
+        val left = stripOffX + s.leftPt * stripScale
+        if (left > vw + 64f) return false
+        return left + s.widthPt * stripScale >= -64f
+    }
+
+    private fun setSlotMatrix(t: ViewTransform) {
+        val v = t.m.v
+        matrixValues[0] = v[0]; matrixValues[1] = v[1]; matrixValues[2] = v[2]
+        matrixValues[3] = v[3]; matrixValues[4] = v[4]; matrixValues[5] = v[5]
+        matrixValues[6] = 0f; matrixValues[7] = 0f; matrixValues[8] = 1f
+        androidMatrix.setValues(matrixValues)
     }
 
     // ------------------------------------------------------------------ draw
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
-        refitViewportIfNeeded()
+        if (w > 0 && h > 0 && stripSlots.isNotEmpty()) refitStrip()
     }
 
-    /** Refits when the page (or session) changed since the last fit. */
+    /** Kept for the Compose update loop: refits only when the view resized. */
     fun refitViewportIfNeeded() {
-        val h0 = host ?: return
-        val doc = h0.doc
-        if (doc.widthPt != fittedPageW || doc.heightPt != fittedPageH) {
-            fittedPageW = doc.widthPt
-            fittedPageH = doc.heightPt
-            h0.tileCache.invalidateAll()
-            if (width > 0 && height > 0) {
-                h0.transform.fitToWidth(doc.widthPt, doc.heightPt, width.toFloat(), height.toFloat())
-            }
-            invalidate()
-        }
-    }
-
-    /** Force a re-fit (page settings changed). */
-    fun refitViewport() {
-        fittedPageW = 0f
-        fittedPageH = 0f
-        refitViewportIfNeeded()
+        if (stripSlots.isEmpty()) return
+        if (width.toFloat() != fittedVw || height.toFloat() != fittedVh) refitStrip()
     }
 
     override fun onDraw(canvas: Canvas) {
-        val h = host ?: return
-        val doc = h.doc
-        val t = h.transform
+        val slots = stripSlots
+        if (slots.isEmpty()) return
+        val anyHost = slots.firstOrNull { it.host != null }?.host ?: return
+        val vw = width.toFloat()
+        val vh = height.toFloat()
 
-        canvas.drawColor(h.surfaceColor())
+        canvas.drawColor(anyHost.surfaceColor())
 
-        h.tileCache.drawInto(canvas, t.scale, t.transX, t.transY, width.toFloat(), height.toFloat(), doc)
-
-        // page-space drawing below
-        val v = t.m.v
-        matrixValues[0] = v[0]; matrixValues[1] = v[1]; matrixValues[2] = v[2]
-        matrixValues[3] = v[3]; matrixValues[4] = v[4]; matrixValues[5] = v[5]
-        matrixValues[6] = 0f; matrixValues[7] = 0f; matrixValues[8] = 1f
-        androidMatrix.setValues(matrixValues)
-        val save = canvas.save()
-        canvas.setMatrix(androidMatrix)
-
-        pageBorderPaint.color = 0x33282828
-        pageBorderPaint.strokeWidth = 1f / t.scale
-        canvas.drawRect(0f, 0f, doc.widthPt, doc.heightPt, pageBorderPaint)
-
-        // objects (except dragged/hidden)
-        val objs = doc.objectsSnapshot().filter { it.id !in h.hiddenObjectIds }
-        val dragged = draggedObject
-        if (objs.isNotEmpty()) objectPainter.drawObjects(canvas, objs)
-
-        // pixel-erase fragments live preview
-        if (pixelFragments.isNotEmpty()) {
-            for (s in pixelFragments) {
-                painter.configure(s.pen, s.argb)
-                previewPath.rewind()
-                painter.appendStrokePath(s, previewPath)
-                canvas.drawPath(previewPath, painter.paint)
-            }
+        // committed tiles per page (screen space)
+        for (s in slots) {
+            val h = s.host ?: continue
+            if (!slotIntersectsViewport(s, vw, vh)) continue
+            h.tileCache.drawInto(canvas, stripScale, h.transform.transX, h.transform.transY, vw, vh, h.doc)
         }
 
-        // shape tool preview
-        if (shapeActive) {
-            val tool = h.tool()
-            val preview = buildShapeStroke(tool, 0, shapeX0, shapeY0, shapeX1, shapeY1, 0f)
-            if (preview != null) {
-                painter.configure(preview.pen, preview.argb)
-                previewPath.rewind()
-                painter.appendStrokePath(preview, previewPath)
-                canvas.drawPath(previewPath, painter.paint)
-            }
-        }
+        // page-space pass per page (objects + per-gesture overlays)
+        for (s in slots) {
+            val h = s.host ?: continue
+            if (!slotIntersectsViewport(s, vw, vh)) continue
 
-        // lasso overlays
-        val ls = lasso
-        if (ls != null) {
-            if (!ls.finished && ls.polygon.size >= 4) {
-                previewPath.rewind()
-                previewPath.moveTo(ls.polygon[0], ls.polygon[1])
-                for (i in 2 until ls.polygon.size step 2) {
-                    previewPath.lineTo(ls.polygon[i], ls.polygon[i + 1])
-                }
-                lassoPaint.strokeWidth = 1.2f / t.scale
-                canvas.drawPath(previewPath, lassoPaint)
-            }
-            if (ls.selectionBounds.let { !it.isEmpty }) {
-                selBoxPaint.strokeWidth = 1.2f / t.scale
-                val b = ls.selectionBounds
-                // transform selection bounds corners by preview matrix (reused scratch)
-                val c = lassoCornerScratch
-                c[0] = b.left; c[1] = b.top; c[2] = b.right; c[3] = b.top
-                c[4] = b.right; c[5] = b.bottom; c[6] = b.left; c[7] = b.bottom
-                ls.preview.mapPoints(c, 0, 4)
-                previewPath.rewind()
-                previewPath.moveTo(c[0], c[1])
-                previewPath.lineTo(c[2], c[3])
-                previewPath.lineTo(c[4], c[5])
-                previewPath.lineTo(c[6], c[7])
-                previewPath.close()
-                canvas.drawPath(previewPath, selBoxPaint)
+            setSlotMatrix(h.transform)
+            val save = canvas.save()
+            canvas.setMatrix(androidMatrix)
 
-                // transformed copies of selected strokes
-                for (s in ls.originals) {
-                    val mapped = s.transformed(ls.preview, s.id)
-                    painter.configure(mapped.pen, mapped.argb)
+            pageBorderPaint.color = 0x33282828
+            pageBorderPaint.strokeWidth = 1f / stripScale
+            canvas.drawRect(0f, 0f, s.widthPt, s.heightPt, pageBorderPaint)
+
+            // objects (except dragged/hidden)
+            val objs = h.doc.objectsSnapshot().filter { it.id !in h.hiddenObjectIds }
+            if (objs.isNotEmpty()) objectPainter.drawObjects(canvas, objs)
+
+            // pixel-erase fragments live preview
+            if (h === eraseHost && pixelFragments.isNotEmpty()) {
+                for (st in pixelFragments) {
+                    painter.configure(st.pen, st.argb)
                     previewPath.rewind()
-                    painter.appendStrokePath(mapped, previewPath)
+                    painter.appendStrokePath(st, previewPath)
                     canvas.drawPath(previewPath, painter.paint)
                 }
             }
-        }
 
-        // dragged object preview at new position
-        if (dragged != null) {
-            drawDraggedPreview(canvas, dragged)
-        }
-
-        // live stroke
-        if (liveActive && liveCount > 0) {
-            painter.configure(livePen, liveArgb)
-            canvas.drawPath(frozenPath, painter.paint)
-            canvas.drawPath(livePath, painter.paint)
-            if (liveCount == 1) {
-                painter.drawDot(canvas, livePts[0], livePts[1], liveWidths[0] / 2f)
-            } else if (specOf(livePen).capOrdinal == PenSpec.CAP_ROUND) {
-                painter.drawDot(canvas, livePts[0], livePts[1], liveWidths[0] / 2f)
-                val lastX = livePts[(liveCount - 1) * STRIDE]
-                val lastY = livePts[(liveCount - 1) * STRIDE + 1]
-                painter.drawDot(canvas, lastX, lastY, liveWidths[liveCount - 1] / 2f)
-            }
-        }
-
-        // laser trail (fading, never saved)
-        if (laserPts.isNotEmpty()) {
-            val now = android.os.SystemClock.uptimeMillis()
-            // compact out expired triplets in place (zero alloc)
-            var w = 0
-            var r = 0
-            while (r + 2 < laserPts.size) {
-                if (laserPts[r + 2] >= now - LASER_FADE_MS) {
-                    laserPts[w] = laserPts[r]
-                    laserPts[w + 1] = laserPts[r + 1]
-                    laserPts[w + 2] = laserPts[r + 2]
-                    w += 3
+            // shape tool preview
+            if (h === shapeHost && shapeActive) {
+                val tool = h.tool()
+                val preview = buildShapeStroke(tool, 0, shapeX0, shapeY0, shapeX1, shapeY1, 0f)
+                if (preview != null) {
+                    painter.configure(preview.pen, preview.argb)
+                    previewPath.rewind()
+                    painter.appendStrokePath(preview, previewPath)
+                    canvas.drawPath(previewPath, painter.paint)
                 }
-                r += 3
             }
-            while (laserPts.size > w) laserPts.removeAt(laserPts.size - 1)
 
-            for (j in laserPts.indices step 3) {
-                val age = (now - laserPts[j + 2]).coerceAtLeast(0f)
-                val alpha = (1f - age / LASER_FADE_MS).coerceIn(0f, 1f)
-                laserPaint.color = ((alpha * 255).toInt() shl 24) or (0xFFD32F2F.toInt() and 0xFFFFFF)
-                val rr = 1f + 3f * alpha
-                canvas.drawCircle(laserPts[j], laserPts[j + 1], rr, laserPaint)
+            // lasso overlays
+            val ls = lasso
+            if (h === lassoHost && ls != null) {
+                if (!ls.finished && ls.polygon.size >= 4) {
+                    previewPath.rewind()
+                    previewPath.moveTo(ls.polygon[0], ls.polygon[1])
+                    for (i in 2 until ls.polygon.size step 2) {
+                        previewPath.lineTo(ls.polygon[i], ls.polygon[i + 1])
+                    }
+                    lassoPaint.strokeWidth = 1.2f / stripScale
+                    canvas.drawPath(previewPath, lassoPaint)
+                }
+                if (ls.selectionBounds.let { !it.isEmpty }) {
+                    selBoxPaint.strokeWidth = 1.2f / stripScale
+                    val b = ls.selectionBounds
+                    // transform selection bounds corners by preview matrix (reused scratch)
+                    val c = lassoCornerScratch
+                    c[0] = b.left; c[1] = b.top; c[2] = b.right; c[3] = b.top
+                    c[4] = b.right; c[5] = b.bottom; c[6] = b.left; c[7] = b.bottom
+                    ls.preview.mapPoints(c, 0, 4)
+                    previewPath.rewind()
+                    previewPath.moveTo(c[0], c[1])
+                    previewPath.lineTo(c[2], c[3])
+                    previewPath.lineTo(c[4], c[5])
+                    previewPath.lineTo(c[6], c[7])
+                    previewPath.close()
+                    canvas.drawPath(previewPath, selBoxPaint)
+
+                    // transformed copies of selected strokes
+                    for (st in ls.originals) {
+                        val mapped = st.transformed(ls.preview, st.id)
+                        painter.configure(mapped.pen, mapped.argb)
+                        previewPath.rewind()
+                        painter.appendStrokePath(mapped, previewPath)
+                        canvas.drawPath(previewPath, painter.paint)
+                    }
+                }
             }
-            postInvalidateOnAnimation()
+
+            // dragged object preview at new position
+            if (h === dragHost && draggedObject != null) {
+                drawDraggedPreview(canvas, draggedObject!!)
+            }
+
+            // live stroke
+            if (h === liveHost && liveActive && liveCount > 0) {
+                painter.configure(livePen, liveArgb)
+                canvas.drawPath(frozenPath, painter.paint)
+                canvas.drawPath(livePath, painter.paint)
+                if (liveCount == 1) {
+                    painter.drawDot(canvas, livePts[0], livePts[1], liveWidths[0] / 2f)
+                } else if (specOf(livePen).capOrdinal == PenSpec.CAP_ROUND) {
+                    painter.drawDot(canvas, livePts[0], livePts[1], liveWidths[0] / 2f)
+                    val lastX = livePts[(liveCount - 1) * STRIDE]
+                    val lastY = livePts[(liveCount - 1) * STRIDE + 1]
+                    painter.drawDot(canvas, lastX, lastY, liveWidths[liveCount - 1] / 2f)
+                }
+            }
+
+            // laser trail (fading, never saved)
+            if (h === laserHost && laserPts.isNotEmpty()) {
+                val now = android.os.SystemClock.uptimeMillis()
+                // compact out expired triplets in place (zero alloc)
+                var w = 0
+                var r = 0
+                while (r + 2 < laserPts.size) {
+                    if (laserPts[r + 2] >= now - LASER_FADE_MS) {
+                        laserPts[w] = laserPts[r]
+                        laserPts[w + 1] = laserPts[r + 1]
+                        laserPts[w + 2] = laserPts[r + 2]
+                        w += 3
+                    }
+                    r += 3
+                }
+                while (laserPts.size > w) laserPts.removeAt(laserPts.size - 1)
+
+                for (j in laserPts.indices step 3) {
+                    val age = (now - laserPts[j + 2]).coerceAtLeast(0f)
+                    val alpha = (1f - age / LASER_FADE_MS).coerceIn(0f, 1f)
+                    laserPaint.color = ((alpha * 255).toInt() shl 24) or (0xFFD32F2F.toInt() and 0xFFFFFF)
+                    val rr = 1f + 3f * alpha
+                    canvas.drawCircle(laserPts[j], laserPts[j + 1], rr, laserPaint)
+                }
+                postInvalidateOnAnimation()
+            }
+
+            canvas.restoreToCount(save)
         }
-
-        canvas.restoreToCount(save)
 
         // eraser ring cursor (screen space)
         if (erasing && !eraseY.isNaN()) {
+            val t = eraseHost?.transform ?: anyHost.transform
             erasePaint.color = 0x99202020.toInt()
             val cx = t.m.mapX(eraseX, eraseY)
             val cy = t.m.mapY(eraseX, eraseY)
@@ -485,7 +727,7 @@ class InkCanvasView @JvmOverloads constructor(
     // ---------------------------------------------------------------- touch
 
     override fun onTouchEvent(e: MotionEvent): Boolean {
-        val h = host ?: return false
+        val h = host ?: stripSlots.firstOrNull { it.host != null }?.host ?: return false
         requestUnbufferedDispatch(e)
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> return onDown(e, h)
@@ -520,6 +762,8 @@ class InkCanvasView @JvmOverloads constructor(
     private fun onDown(e: MotionEvent, h: Host): Boolean {
         routes.clear()
         navPointerCount = 0
+        navClear()
+        scroller.forceFinished(true)
         val tool = h.tool()
         val route = router.route(spec(e, 0))
         val isStylus = e.getToolType(0) == ToolTypes.STYLUS || e.getToolType(0) == ToolTypes.ERASER
@@ -537,8 +781,21 @@ class InkCanvasView @JvmOverloads constructor(
 
         routes.put(e.getPointerId(0), route)
 
-        // resolve page point
-        val ok = h.transform.toPage(e.x, e.y, pagePoint)
+        // v1.2: content gestures target the page actually under the pointer
+        var tgt: Host = h
+        if (route == Route.DRAW || route == Route.ERASE || route == Route.LASSO) {
+            val slot = slotAt(e.x, e.y)
+            if (slot != null && slot.host == null) {
+                // page not loaded yet (fast scroll): ask for it, ignore gesture
+                onPageNeedsLoad?.invoke(slot.index)
+                routes.put(e.getPointerId(0), Route.IGNORE)
+                return true
+            }
+            if (slot != null) tgt = slot.host!!
+        }
+
+        // resolve page point on the target page
+        val ok = tgt.transform.toPage(e.x, e.y, pagePoint)
         val px = pagePoint[0]
         val py = pagePoint[1]
 
@@ -547,7 +804,7 @@ class InkCanvasView @JvmOverloads constructor(
         if (ls != null && ls.finished && route == Route.DRAW) {
             val inside = pointInSelection(px, py, ls)
             if (!inside) {
-                commitLasso(h)
+                commitLasso()
                 // fall through: start a new gesture below
             } else {
                 ls.mode = 1
@@ -559,36 +816,37 @@ class InkCanvasView @JvmOverloads constructor(
 
         when (route) {
             Route.DRAW -> when (tool.tool) {
-                EditorTool.LASSO -> beginLasso(h, px, py)
-                EditorTool.SHAPE -> beginShape(h, px, py)
-                EditorTool.LASER -> beginLaser(h, px, py)
+                EditorTool.LASSO -> beginLasso(tgt, px, py)
+                EditorTool.SHAPE -> beginShape(tgt, px, py)
+                EditorTool.LASER -> beginLaser(tgt, px, py)
                 EditorTool.TEXT -> {
                     // tap handled on UP (no move)
                 }
                 EditorTool.IMAGE -> { /* tap handled on UP */ }
-                EditorTool.ERASER -> beginErase(e, 0, h)
-                EditorTool.HIGHLIGHTER -> beginStroke(e, 0, h) // separated highlighter tool
+                EditorTool.ERASER -> beginErase(e, 0, tgt)
+                EditorTool.HIGHLIGHTER -> beginStroke(e, 0, tgt) // separated highlighter tool
                 EditorTool.PEN -> {
                     // object drag? (text/image under the pen)
                     if (ok) {
-                        val hit = objectPainter.hitTest(h.doc.objectsSnapshot(), px, py)
+                        val hit = objectPainter.hitTest(tgt.doc.objectsSnapshot(), px, py)
                         if (hit != null) {
                             draggedObject = hit
+                            dragHost = tgt
                             dragStartPageX = px
                             dragStartPageY = py
                             dragMoved = false
-                            h.hiddenObjectIds.add(hit.id)
-                            h.tileCache.invalidateAll()
+                            tgt.hiddenObjectIds.add(hit.id)
+                            tgt.tileCache.invalidateAll()
                             return true
                         }
                     }
-                    beginStroke(e, 0, h)
+                    beginStroke(e, 0, tgt)
                 }
             }
-            Route.ERASE -> beginErase(e, 0, h)
+            Route.ERASE -> beginErase(e, 0, tgt)
             Route.LASSO -> {
                 // v1.1: barrel-button lasso — the current tool does not matter
-                if (ok && lasso == null) beginLasso(h, px, py)
+                if (ok && lasso == null) beginLasso(tgt, px, py)
             }
             Route.COMMAND -> {
                 // v1.1: barrel-button undo/redo fires once on press
@@ -597,6 +855,7 @@ class InkCanvasView @JvmOverloads constructor(
             Route.NAVIGATE -> {
                 gestures.begin(e.x, e.y, e.x, e.y)
                 navPointerCount = 1
+                navTrack(e.x, e.y, e.eventTime)
             }
             Route.IGNORE -> Unit
         }
@@ -623,37 +882,79 @@ class InkCanvasView @JvmOverloads constructor(
             return true
         }
 
+        // v1.2: a second finger ALWAYS means navigation — if the first finger
+        // was mid-stroke (finger drawing enabled), discard that stroke and
+        // promote both pointers so pinch-zoom works in EVERY mode.
+        if (e.pointerCount == 2 && route == Route.NAVIGATE &&
+            e.getToolType(i) == ToolTypes.FINGER
+        ) {
+            val otherId = e.getPointerId(if (i == 0) 1 else 0)
+            if (routes.get(otherId) == Route.DRAW &&
+                liveActive && drawingPointerId == otherId
+            ) {
+                cancelStroke(liveHost ?: h)
+                routes.put(otherId, Route.NAVIGATE)
+            }
+        }
+
         when (route) {
             Route.NAVIGATE -> {
-                // v1.1: in pen-only mode the first finger landed as IGNORE
-                // (anti-palm); a second small finger is a deliberate pinch —
-                // promote the first so pan/zoom keeps working.
-                if (h.stylusOnly()) {
-                    promoteIgnoredFingers(e)
-                    navPointerCount = 0
-                    for (p in 0 until e.pointerCount) {
-                        if (routes.get(e.getPointerId(p)) == Route.NAVIGATE) navPointerCount++
-                    }
-                } else {
-                    navPointerCount++
-                }
+                // v1.1: in pen-only mode an ignored small finger joins a
+                // deliberate pinch — promote so pan/zoom keeps working.
+                if (h.stylusOnly()) promoteIgnoredFingers(e)
+                recountNav(e)
                 if (navPointerCount == 2) {
                     val a = navigatePointer(e, 0)
                     val b = navigatePointer(e, 1)
                     if (a != null && b != null) gestures.begin(a[0], a[1], b[0], b[1])
                 }
             }
-            Route.DRAW -> if (!liveActive) beginStroke(e, i, h)
-            Route.ERASE -> if (!erasing) beginErase(e, i, h)
+            Route.DRAW -> if (!liveActive) beginStrokeOnSlot(e, i, h)
+            Route.ERASE -> if (!erasing) beginEraseOnSlot(e, i, h)
             Route.LASSO -> {
-                if (lasso == null && h.transform.toPage(e.getX(i), e.getY(i), pagePoint)) {
-                    beginLasso(h, pagePoint[0], pagePoint[1])
+                val slot = slotAt(e.getX(i), e.getY(i))
+                val tgt = slot?.host
+                if (tgt != null) {
+                    if (lasso == null && tgt.transform.toPage(e.getX(i), e.getY(i), pagePoint)) {
+                        beginLasso(tgt, pagePoint[0], pagePoint[1])
+                    }
+                } else if (slot != null) {
+                    onPageNeedsLoad?.invoke(slot.index)
                 }
             }
             Route.COMMAND -> Unit // fired once on DOWN
             Route.IGNORE -> Unit
         }
         return true
+    }
+
+    /** Resolves the page under the new pointer and starts a stroke there. */
+    private fun beginStrokeOnSlot(e: MotionEvent, i: Int, fallback: Host) {
+        val slot = slotAt(e.getX(i), e.getY(i))
+        if (slot != null && slot.host == null) {
+            onPageNeedsLoad?.invoke(slot.index)
+            routes.put(e.getPointerId(i), Route.IGNORE)
+            return
+        }
+        beginStroke(e, i, slot?.host ?: fallback)
+    }
+
+    private fun beginEraseOnSlot(e: MotionEvent, i: Int, fallback: Host) {
+        val slot = slotAt(e.getX(i), e.getY(i))
+        if (slot != null && slot.host == null) {
+            onPageNeedsLoad?.invoke(slot.index)
+            routes.put(e.getPointerId(i), Route.IGNORE)
+            return
+        }
+        beginErase(e, i, slot?.host ?: fallback)
+    }
+
+    private fun recountNav(e: MotionEvent) {
+        var n = 0
+        for (p in 0 until e.pointerCount) {
+            if (routes.get(e.getPointerId(p)) == Route.NAVIGATE) n++
+        }
+        navPointerCount = n
     }
 
     private fun navigatePointer(e: MotionEvent, order: Int): FloatArray? {
@@ -679,8 +980,9 @@ class InkCanvasView @JvmOverloads constructor(
         // selection gestures
         val ls = lasso
         if (ls != null && ls.finished) {
+            val lh = lassoHost ?: h
             if (ls.mode == 1) {
-                if (h.transform.toPage(e.x, e.y, pagePoint)) {
+                if (lh.transform.toPage(e.x, e.y, pagePoint)) {
                     val dx = pagePoint[0] - lassoMoveLastX
                     val dy = pagePoint[1] - lassoMoveLastY
                     ls.preview.postTranslate(dx, dy)
@@ -698,20 +1000,20 @@ class InkCanvasView @JvmOverloads constructor(
                 val cy = (b + d) / 2f
                 // map screen centroid to page space and rotate/scale there
                 val pc = floatArrayOf(cx, cy)
-                if (h.transform.toPage(cx, cy, pc)) {
+                if (lh.transform.toPage(cx, cy, pc)) {
                     val dAngle = angle - tgLastAngle
                     if (span > 1f && tgLastSpan > 1f) {
                         val k = span / tgLastSpan
                         ls.preview.postScale(k, k, pc[0], pc[1])
                     }
-                    if (kotlin.math.abs(dAngle) > 0.01f) {
+                    if (abs(dAngle) > 0.01f) {
                         ls.preview.postRotate(dAngle, pc[0], pc[1])
                     }
                     val dx = cx - tgLastCx
                     val dy = cy - tgLastCy
                     if (dx != 0f || dy != 0f) {
                         val pd = floatArrayOf(dx, dy)
-                        h.transform.m.inverseMapPoints(pd, 0, 1)
+                        lh.transform.m.inverseMapPoints(pd, 0, 1)
                         ls.preview.postTranslate(pd[0], pd[1])
                     }
                 }
@@ -727,7 +1029,8 @@ class InkCanvasView @JvmOverloads constructor(
         // object drag
         val dragged = draggedObject
         if (dragged != null) {
-            if (h.transform.toPage(e.x, e.y, pagePoint)) {
+            val dh = dragHost ?: h
+            if (dh.transform.toPage(e.x, e.y, pagePoint)) {
                 dragMoved = true
                 invalidate()
             }
@@ -736,7 +1039,8 @@ class InkCanvasView @JvmOverloads constructor(
 
         // laser
         if (laserActive) {
-            if (h.transform.toPage(e.x, e.y, pagePoint)) {
+            val lh = laserHost ?: h
+            if (lh.transform.toPage(e.x, e.y, pagePoint)) {
                 laserPts.add(pagePoint[0]); laserPts.add(pagePoint[1]); laserPts.add(e.eventTime.toFloat())
                 postInvalidateOnAnimation()
             }
@@ -746,7 +1050,8 @@ class InkCanvasView @JvmOverloads constructor(
         // lasso capture
         val ls2 = lasso
         if (ls2 != null && !ls2.finished) {
-            if (h.transform.toPage(e.x, e.y, pagePoint)) {
+            val lh = lassoHost ?: h
+            if (lh.transform.toPage(e.x, e.y, pagePoint)) {
                 ls2.polygon.add(pagePoint[0]); ls2.polygon.add(pagePoint[1])
                 invalidate()
             }
@@ -755,7 +1060,8 @@ class InkCanvasView @JvmOverloads constructor(
 
         // shape preview
         if (shapeActive) {
-            if (h.transform.toPage(e.x, e.y, pagePoint)) {
+            val sh = shapeHost ?: h
+            if (sh.transform.toPage(e.x, e.y, pagePoint)) {
                 shapeX1 = pagePoint[0]
                 shapeY1 = pagePoint[1]
                 invalidate()
@@ -778,7 +1084,7 @@ class InkCanvasView @JvmOverloads constructor(
             dispatchSample(e, p, e.getX(p), e.getY(p), e.getPressure(p), e.eventTime, route, h)
         }
 
-        if (liveActive || erasing) invalidateLiveDirty(h)
+        if (liveActive || erasing) invalidateLiveDirty()
         return true
     }
 
@@ -790,14 +1096,16 @@ class InkCanvasView @JvmOverloads constructor(
         pressure: Float,
         timeMs: Long,
         route: Route,
-        h: Host
+        fallback: Host
     ) {
         when (route) {
             Route.DRAW -> {
-                if (e.getPointerId(p) == drawingPointerId) addLivePoint(sx, sy, pressure, timeMs, h)
+                val lh = liveHost ?: fallback
+                if (e.getPointerId(p) == drawingPointerId) addLivePoint(sx, sy, pressure, timeMs, lh)
             }
             Route.ERASE -> {
-                if (e.getPointerId(p) == erasingPointerId) eraseSegment(sx, sy, h)
+                val eh = eraseHost ?: fallback
+                if (e.getPointerId(p) == erasingPointerId) eraseSegment(sx, sy, eh)
             }
             else -> Unit
         }
@@ -812,7 +1120,8 @@ class InkCanvasView @JvmOverloads constructor(
         val ls = lasso
         if (ls != null && ls.finished && ls.mode == 2) {
             ls.mode = 1
-            if (h.transform.toPage(e.getX(i), e.getY(i), pagePoint)) {
+            val lh = lassoHost ?: h
+            if (lh.transform.toPage(e.getX(i), e.getY(i), pagePoint)) {
                 lassoMoveLastX = pagePoint[0]
                 lassoMoveLastY = pagePoint[1]
             }
@@ -820,16 +1129,20 @@ class InkCanvasView @JvmOverloads constructor(
         }
 
         when (route) {
-            Route.DRAW -> if (id == drawingPointerId) endStroke(e.eventTime, h)
-            Route.ERASE -> if (id == erasingPointerId) endEraseGesture(h)
+            Route.DRAW -> if (id == drawingPointerId) endStroke(e.eventTime, liveHost ?: h)
+            Route.ERASE -> if (id == erasingPointerId) endEraseGesture(eraseHost ?: h)
             Route.LASSO -> Unit // barrel-lasso: capture continues; ends on final UP
             Route.COMMAND -> Unit // one-shot command already fired on DOWN
             Route.NAVIGATE -> {
-                navPointerCount--
+                recountNav(e)
                 if (navPointerCount <= 1) {
                     val remaining = navigatePointer(e, 0)
-                    if (remaining != null) gestures.begin(remaining[0], remaining[1], remaining[0], remaining[1])
-                    else gestures.end()
+                    if (remaining != null) {
+                        gestures.begin(remaining[0], remaining[1], remaining[0], remaining[1])
+                        navTrack(remaining[0], remaining[1], e.eventTime)
+                    } else {
+                        gestures.end()
+                    }
                     invalidate()
                 }
             }
@@ -857,19 +1170,20 @@ class InkCanvasView @JvmOverloads constructor(
         }
 
         if (ls != null && !ls.finished && (tool.tool == EditorTool.LASSO || route == Route.LASSO)) {
-            finishLassoCapture(h)
+            finishLassoCapture(lassoHost ?: h)
             routes.clear()
             return true
         }
 
         if (shapeActive && tool.tool == EditorTool.SHAPE) {
-            endShape(h)
+            endShape(shapeHost ?: h)
             routes.clear()
             return true
         }
 
         if (laserActive) {
             laserActive = false
+            laserHost = null
             postInvalidateOnAnimation()
             routes.clear()
             return true
@@ -877,33 +1191,35 @@ class InkCanvasView @JvmOverloads constructor(
 
         val dragged = draggedObject
         if (dragged != null) {
-            endObjectDrag(h)
+            endObjectDrag(dragHost ?: h)
             routes.clear()
             return true
         }
 
         // taps (no movement) for text/image/link
         if (route == Route.DRAW && !canceled) {
+            val slot = slotAt(e.x, e.y)
+            val tgt: Host = slot?.host ?: h
             when (tool.tool) {
                 EditorTool.TEXT -> {
-                    if (h.transform.toPage(e.x, e.y, pagePoint)) {
-                        h.onTapForText(pagePoint[0], pagePoint[1])
+                    if (tgt.transform.toPage(e.x, e.y, pagePoint)) {
+                        tgt.onTapForText(pagePoint[0], pagePoint[1])
                     }
                     routes.clear()
                     return true
                 }
                 EditorTool.IMAGE -> {
-                    if (h.transform.toPage(e.x, e.y, pagePoint)) {
-                        h.onTapForImage(pagePoint[0], pagePoint[1])
+                    if (tgt.transform.toPage(e.x, e.y, pagePoint)) {
+                        tgt.onTapForImage(pagePoint[0], pagePoint[1])
                     }
                     routes.clear()
                     return true
                 }
                 EditorTool.PEN -> {
-                    if (h.transform.toPage(e.x, e.y, pagePoint)) {
-                        val link = objectPainter.hitTest(h.doc.objectsSnapshot(), pagePoint[0], pagePoint[1])
+                    if (tgt.transform.toPage(e.x, e.y, pagePoint)) {
+                        val link = objectPainter.hitTest(tgt.doc.objectsSnapshot(), pagePoint[0], pagePoint[1])
                         if (link is LinkObj && !liveActive) {
-                            h.onLinkTap(link)
+                            tgt.onLinkTap(link)
                             routes.clear()
                             return true
                         }
@@ -914,8 +1230,8 @@ class InkCanvasView @JvmOverloads constructor(
         }
 
         when (route) {
-            Route.DRAW -> if (canceled) cancelStroke(h) else if (id == drawingPointerId) endStroke(e.eventTime, h)
-            Route.ERASE -> if (id == erasingPointerId) endEraseGesture(h)
+            Route.DRAW -> if (canceled) cancelStroke(liveHost ?: h) else if (id == drawingPointerId) endStroke(e.eventTime, liveHost ?: h)
+            Route.ERASE -> if (id == erasingPointerId) endEraseGesture(eraseHost ?: h)
             Route.LASSO -> Unit // handled by finishLassoCapture above
             Route.COMMAND -> Unit
             Route.NAVIGATE -> {
@@ -923,9 +1239,11 @@ class InkCanvasView @JvmOverloads constructor(
                     lastTapUpMs = e.eventTime
                     lastTapX = e.x
                     lastTapY = e.y
+                    startFlingIfNeeded()
                 }
                 navPointerCount = 0
                 gestures.end()
+                updateActiveFromViewport(notify = true)
                 invalidate()
             }
             Route.IGNORE -> Unit
@@ -938,15 +1256,23 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     private fun onCancel(e: MotionEvent, h: Host): Boolean {
-        cancelStroke(h)
+        cancelStroke(liveHost ?: h)
         erasing = false
+        eraseHost = null
+        shapeHost = null
+        dragHost = null
+        laserHost = null
+        laserActive = false
         endPixelEraseDiscard()
         eraseY = Float.NaN
-        draggedObject?.let { h.hiddenObjectIds.remove(it.id) }
+        draggedObject?.let { dh -> (dragHost ?: h).hiddenObjectIds.remove(it.id) }
         draggedObject = null
         lasso = null
+        lassoHost = null
         routes.clear()
         navPointerCount = 0
+        navClear()
+        scroller.forceFinished(true)
         gestures.end()
         h.onViewportOrContentMayHaveChanged()
         invalidate()
@@ -955,25 +1281,94 @@ class InkCanvasView @JvmOverloads constructor(
 
     // ------------------------------------------------------------- navigation
 
+    /** Strip pan/zoom from the gesture controller (all pages move together). */
     private fun maybeNav(e: MotionEvent, h: Host) {
-        if (navPointerCount <= 0) return
+        if (navPointerCount <= 0 || stripSlots.isEmpty()) return
         if (navPointerCount >= 2) {
             val a = navigatePointer(e, 0)
             val b = navigatePointer(e, 1)
             if (a != null && b != null) {
                 gestures.update(a[0], a[1], b[0], b[1])
-                val t = h.transform
-                t.zoom(gestures.zoomFactor, gestures.focusX, gestures.focusY)
-                t.pan(gestures.focusDx, gestures.focusDy)
-                t.clampPan(h.doc.widthPt, h.doc.heightPt, width.toFloat(), height.toFloat())
-                invalidate()
+                zoomBy(gestures.zoomFactor, gestures.focusX, gestures.focusY)
+                stripPan(gestures.focusDx, gestures.focusDy)
             }
         } else {
             val a = navigatePointer(e, 0) ?: return
             gestures.update(a[0], a[1], a[0], a[1])
-            h.transform.pan(gestures.focusDx, gestures.focusDy)
-            h.transform.clampPan(h.doc.widthPt, h.doc.heightPt, width.toFloat(), height.toFloat())
-            invalidate()
+            stripPan(gestures.focusDx, gestures.focusDy)
+            navTrack(a[0], a[1], e.eventTime)
+        }
+        updateActiveFromViewport(notify = true)
+    }
+
+    private fun zoomBy(factor: Float, fx: Float, fy: Float) {
+        val target = (stripScale * factor).coerceIn(stripMinScale, STRIP_MAX_SCALE)
+        val k = target / stripScale
+        if (k == 1f) return
+        stripOffX = fx - (fx - stripOffX) * k
+        stripOffY = fy - (fy - stripOffY) * k
+        stripScale = target
+    }
+
+    private fun stripPan(dx: Float, dy: Float) {
+        stripOffX += dx
+        stripOffY += dy
+        clampStrip()
+        pushTransforms()
+        invalidate()
+    }
+
+    // ------------------------------- fling (vertical strip browsing, v1.2)
+
+    private fun navTrack(x: Float, y: Float, t: Long) {
+        navT[navPos] = t
+        navXs[navPos] = x
+        navYs[navPos] = y
+        navPos = (navPos + 1) % NAV_TRACK_N
+        if (navN < NAV_TRACK_N) navN++
+    }
+
+    private fun navClear() {
+        navN = 0
+        navPos = 0
+    }
+
+    /** Starts a vertical fling when the last NAVIGATE finger left quickly. */
+    private fun startFlingIfNeeded() {
+        if (navN < 2) {
+            navClear()
+            return
+        }
+        val newest = (navPos - 1 + NAV_TRACK_N) % NAV_TRACK_N
+        var oldest = newest
+        var i = 1
+        while (i < navN) {
+            val cand = (newest - i + NAV_TRACK_N) % NAV_TRACK_N
+            if (navT[newest] - navT[cand] <= 120) oldest = cand else break
+            i++
+        }
+        val dt = navT[newest] - navT[oldest]
+        val vy = if (dt > 0) (navYs[newest] - navYs[oldest]) * 1000f / dt else 0f
+        navClear()
+        if (abs(vy) < 350f) return
+        scroller.fling(0, 0, 0, vy.toInt().coerceIn(-12000, 12000), 0, 0, -100000000, 100000000)
+        flingLastY = 0
+        postInvalidateOnAnimation()
+    }
+
+    override fun computeScroll() {
+        if (scroller.computeScrollOffset()) {
+            val y = scroller.currY
+            val dy = y - flingLastY
+            flingLastY = y
+            if (dy != 0) {
+                stripOffY += dy
+                clampStrip()
+                pushTransforms()
+                updateActiveFromViewport(notify = true)
+                invalidate()
+            }
+            postInvalidateOnAnimation()
         }
     }
 
@@ -981,6 +1376,7 @@ class InkCanvasView @JvmOverloads constructor(
 
     private fun beginStroke(e: MotionEvent, i: Int, h: Host) {
         val tool = h.tool()
+        liveHost = h
         livePen = tool.pen
         liveArgb = tool.colorArgb
         liveBaseWidth = tool.widthPt
@@ -1060,9 +1456,13 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     private fun endStroke(upTimeMs: Long, h: Host) {
-        if (!liveActive) return
+        if (!liveActive) {
+            liveHost = null
+            return
+        }
         liveActive = false
         drawingPointerId = -1
+        liveHost = null
         if (liveCount == 0) {
             livePath.rewind(); frozenPath.rewind()
             return
@@ -1110,6 +1510,7 @@ class InkCanvasView @JvmOverloads constructor(
     private fun cancelStroke(h: Host) {
         liveActive = false
         drawingPointerId = -1
+        liveHost = null
         livePath.rewind()
         frozenPath.rewind()
         invalidate()
@@ -1119,6 +1520,7 @@ class InkCanvasView @JvmOverloads constructor(
 
     private fun beginErase(e: MotionEvent, i: Int, h: Host) {
         erasing = true
+        eraseHost = h
         erasingPointerId = e.getPointerId(i)
         erasedThisGesture.clear()
         val tool = h.tool()
@@ -1232,9 +1634,13 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     private fun endEraseGesture(h: Host) {
-        if (!erasing) return
+        if (!erasing) {
+            eraseHost = null
+            return
+        }
         erasing = false
         erasingPointerId = -1
+        eraseHost = null
 
         val tool = h.tool()
         if (!tool.eraserWholeStroke) {
@@ -1268,6 +1674,7 @@ class InkCanvasView @JvmOverloads constructor(
 
     private fun beginLasso(h: Host, px: Float, py: Float) {
         val ls = LassoState()
+        lassoHost = h
         ls.polygon.add(px); ls.polygon.add(py)
         lasso = ls
         invalidate()
@@ -1296,6 +1703,7 @@ class InkCanvasView @JvmOverloads constructor(
 
         if (ls.selectedIds.isEmpty()) {
             lasso = null
+            lassoHost = null
         } else {
             ls.finished = true
             val b = Bounds()
@@ -1316,11 +1724,12 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     /** Commits the current transform as one ReplaceStrokes, clears the lasso. */
-    fun commitLasso(h: Host? = host) {
-        val hh = h ?: return
+    fun commitLasso(h: Host? = null) {
+        val hh = h ?: lassoHost ?: host ?: return
         val ls = lasso ?: return
         if (ls.originals.isEmpty()) {
             lasso = null
+            lassoHost = null
             invalidate()
             return
         }
@@ -1333,6 +1742,7 @@ class InkCanvasView @JvmOverloads constructor(
         ls.selectedIds.forEach { hh.hiddenStrokeIds.remove(it) }
         hh.tileCache.invalidateAll()
         lasso = null
+        lassoHost = null
         invalidate()
     }
 
@@ -1341,19 +1751,23 @@ class InkCanvasView @JvmOverloads constructor(
         return ls.originals.map { it.transformed(ls.preview, it.id) }
     }
 
+    /** The page owning the active lasso (for paste/targeting in the VM). */
+    fun selectionHost(): Host? = lassoHost
+
     fun hasSelection(): Boolean = lasso?.finished == true
 
-    fun clearSelectionOnly(h: Host? = host) {
-        val hh = h ?: return
+    fun clearSelectionOnly(h: Host? = null) {
+        val hh = h ?: lassoHost ?: host ?: return
         val ls = lasso ?: return
         ls.selectedIds.forEach { hh.hiddenStrokeIds.remove(it) }
         lasso = null
+        lassoHost = null
         hh.tileCache.invalidateAll()
         invalidate()
     }
 
-    fun deleteSelection(h: Host? = host) {
-        val hh = h ?: return
+    fun deleteSelection(h: Host? = null) {
+        val hh = h ?: lassoHost ?: host ?: return
         val ls = lasso ?: return
         if (ls.originals.isEmpty()) return
         hh.history.push(ReplaceStrokes(ArrayList(ls.originals), emptyList()), hh.doc)
@@ -1361,11 +1775,12 @@ class InkCanvasView @JvmOverloads constructor(
         ls.selectedIds.forEach { hh.hiddenStrokeIds.remove(it) }
         hh.tileCache.invalidateAll()
         lasso = null
+        lassoHost = null
         invalidate()
     }
 
-    fun recolorSelection(argb: Int, h: Host? = host) {
-        val hh = h ?: return
+    fun recolorSelection(argb: Int, h: Host? = null) {
+        val hh = h ?: lassoHost ?: host ?: return
         val ls = lasso ?: return
         if (ls.originals.isEmpty()) return
         val recolored = ls.originals.map {
@@ -1384,6 +1799,7 @@ class InkCanvasView @JvmOverloads constructor(
 
     private fun beginShape(h: Host, px: Float, py: Float) {
         shapeActive = true
+        shapeHost = h
         shapeX0 = px; shapeY0 = py
         shapeX1 = px; shapeY1 = py
         invalidate()
@@ -1391,6 +1807,7 @@ class InkCanvasView @JvmOverloads constructor(
 
     private fun endShape(h: Host) {
         shapeActive = false
+        shapeHost = null
         val tool = h.tool()
         val s = buildShapeStroke(tool, h.doc.nextStrokeId(), shapeX0, shapeY0, shapeX1, shapeY1, 0f)
         if (s != null) {
@@ -1421,7 +1838,7 @@ class InkCanvasView @JvmOverloads constructor(
             com.nanote.ink.engine.ShapeKind.ELLIPSE ->
                 com.nanote.ink.engine.buildEllipseStroke(
                     (x0 + x1) / 2f, (y0 + y1) / 2f,
-                    kotlin.math.abs(x1 - x0) / 2f, kotlin.math.abs(y1 - y0) / 2f,
+                    abs(x1 - x0) / 2f, abs(y1 - y0) / 2f,
                     id, pen, argb, w, t0
                 )
             com.nanote.ink.engine.ShapeKind.TRIANGLE ->
@@ -1458,6 +1875,7 @@ class InkCanvasView @JvmOverloads constructor(
     private fun endObjectDrag(h: Host) {
         val obj = draggedObject
         draggedObject = null
+        dragHost = null
         if (obj == null) return
         h.hiddenObjectIds.remove(obj.id)
         if (!dragMoved) {
@@ -1491,17 +1909,19 @@ class InkCanvasView @JvmOverloads constructor(
 
     private fun beginLaser(h: Host, px: Float, py: Float) {
         laserActive = true
+        laserHost = h
         laserPts.add(px); laserPts.add(py); laserPts.add(android.os.SystemClock.uptimeMillis().toFloat())
         postInvalidateOnAnimation()
     }
 
     // ---------------------------------------------------------- invalidation
 
-    private fun invalidateLiveDirty(h: Host) {
-        if (!liveDirty.isEmpty) {
+    private fun invalidateLiveDirty() {
+        val lh = liveHost
+        if (lh != null && !liveDirty.isEmpty) {
             val b = Bounds()
             b.set(liveDirty)
-            invalidatePageRegion(b, h)
+            invalidatePageRegion(b, lh)
             liveDirty.reset()
         }
         if (erasing && !eraseY.isNaN()) {
@@ -1524,16 +1944,28 @@ class InkCanvasView @JvmOverloads constructor(
 
     // ---------------------------------------------------------- double tap
 
+    /** Base fit scale of a page (PDF -> fit page, paper -> fit width). */
+    private fun baseFitScaleOf(slot: StripSlot): Float {
+        val vw = width.toFloat()
+        val vh = height.toFloat()
+        val pdf = slot.host?.isPdfPage == true
+        return if (pdf) minOf(vw / maxOf(slot.widthPt, 1f), vh / maxOf(slot.heightPt, 1f))
+        else vw / maxOf(slot.widthPt, 1f)
+    }
+
+    /** Double-tap toggles between the page's fit scale and 2x, about the tap. */
     private fun animateZoomToggle(sx: Float, sy: Float) {
-        val h = host ?: return
-        val t = h.transform
+        val slot = stripSlots.getOrNull(activeIndex) ?: return
+        scroller.forceFinished(true)
+        centerAnimator?.cancel()
         zoomAnimator?.cancel()
 
-        val s0 = t.scale
-        val s1 = if (s0 > 2f) s0 * 0.5f else s0 * 2f
+        val fitScale = baseFitScaleOf(slot).coerceIn(stripMinScale, STRIP_MAX_SCALE)
+        val s0 = stripScale
+        val s1 = if (s0 > fitScale * 1.6f) fitScale else (fitScale * 2f).coerceIn(stripMinScale, STRIP_MAX_SCALE)
 
-        val p = FloatArray(2)
-        if (!t.toPage(sx, sy, p)) return
+        val stripX = (sx - stripOffX) / s0
+        val stripY = (sy - stripOffY) / s0
 
         val anim = ValueAnimator.ofFloat(0f, 1f)
         anim.duration = 220
@@ -1541,10 +1973,12 @@ class InkCanvasView @JvmOverloads constructor(
         anim.addUpdateListener { a ->
             val f = a.animatedFraction
             val s = s0 + (s1 - s0) * f
-            val tx = sx - s * p[0]
-            val ty = sy - s * p[1]
-            t.setScaleTranslate(t.clampScale(s), tx, ty)
-            t.clampPan(h.doc.widthPt, h.doc.heightPt, width.toFloat(), height.toFloat())
+            stripScale = s.coerceIn(stripMinScale, STRIP_MAX_SCALE)
+            stripOffX = sx - stripX * stripScale
+            stripOffY = sy - stripY * stripScale
+            clampStrip()
+            pushTransforms()
+            updateActiveFromViewport(notify = true)
             invalidate()
         }
         zoomAnimator = anim
@@ -1557,6 +1991,8 @@ class InkCanvasView @JvmOverloads constructor(
         private const val FROZEN_CHUNK = 128
         private const val LIVE_TAIL = 24
         private const val LASER_FADE_MS = 550f
+        private const val NAV_TRACK_N = 16
+        private const val STRIP_MAX_SCALE = 8f
 
         /** Mirrors InputRouter's default palm contact-patch threshold. */
         private const val PALM_MAJOR_PX = 30f
