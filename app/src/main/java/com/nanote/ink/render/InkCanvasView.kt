@@ -1260,13 +1260,15 @@ class InkCanvasView @JvmOverloads constructor(
         erasing = false
         eraseHost = null
         shapeHost = null
-        dragHost = null
         laserHost = null
         laserActive = false
         endPixelEraseDiscard()
         eraseY = Float.NaN
-        draggedObject?.let { dh -> (dragHost ?: h).hiddenObjectIds.remove(it.id) }
+        draggedObject?.let { obj ->
+            (dragHost ?: h).hiddenObjectIds.remove(obj.id)
+        }
         draggedObject = null
+        dragHost = null
         lasso = null
         lassoHost = null
         routes.clear()
