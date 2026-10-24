@@ -11,13 +11,22 @@ package com.nanote.ink.engine
  * Backed by the pure-Kotlin Mat3 (same layout as android.graphics.Matrix);
  * the render layer copies values out each frame. Double-tap animation is
  * driven by the view, which interpolates towards [fitToWidth] / 2x.
+ *
+ * v1.1: the zoom-out floor is ADAPTIVE. Imported PDFs come in any page size
+ * (A4 … A0 posters, CAD sheets, panoramic slides), so a fixed 0.25 floor
+ * made giant pages overflow the screen. [fitToWidth]/[fitToPage] now lower
+ * the floor to the page's own fit scale, so every page — however large —
+ * lands fully visible, and zooming out further stays possible.
  */
 class ViewTransform(
-    private val minScale: Float = 0.25f,
+    initialMinScale: Float = 0.25f,
     private val maxScale: Float = 8f
 ) {
     val m = Mat3()
     private val inv = Mat3()
+
+    private var minScale = initialMinScale
+    private val initialFloor = initialMinScale
 
     val scale: Float
         get() = m.scaleX
@@ -26,6 +35,11 @@ class ViewTransform(
     val transY: Float get() = m.transY
 
     fun reset() = m.reset()
+
+    /** Lower zoom-out floor so pages bigger than the viewport still fit. */
+    private fun lowerFloorFor(fitScale: Float) {
+        if (fitScale < minScale) minScale = fitScale
+    }
 
     fun zoom(factor: Float, fx: Float, fy: Float) {
         val k = (scale * factor).coerceIn(minScale, maxScale) / scale
@@ -77,7 +91,9 @@ class ViewTransform(
 
     /** Fits the page width to the viewport width (no margins in M1). */
     fun fitToWidth(pageW: Float, pageH: Float, vw: Float, vh: Float) {
-        val s = (vw / maxOf(pageW, 1f)).coerceIn(minScale, maxScale)
+        val fit = vw / maxOf(pageW, 1f)
+        lowerFloorFor(fit)
+        val s = fit.coerceIn(minScale, maxScale)
         val tx = 0f
         val ty = (vh - pageH * s) / 2f
         setIdentityScaleTranslate(s, tx, ty)
@@ -85,11 +101,19 @@ class ViewTransform(
 
     /** Fits the whole page inside the viewport. */
     fun fitToPage(pageW: Float, pageH: Float, vw: Float, vh: Float) {
-        val s = minOf(vw / maxOf(pageW, 1f), vh / maxOf(pageH, 1f)).coerceIn(minScale, maxScale)
+        val fit = minOf(vw / maxOf(pageW, 1f), vh / maxOf(pageH, 1f))
+        lowerFloorFor(fit)
+        val s = fit.coerceIn(minScale, maxScale)
         val tx = (vw - pageW * s) / 2f
         val ty = (vh - pageH * s) / 2f
         setIdentityScaleTranslate(s, tx, ty)
     }
+
+    /** True when the zoom-out floor was lowered for an oversized page. */
+    val oversizedPage: Boolean get() = minScale < initialFloor
+
+    /** Clamp helper for animators — respects the adaptive zoom-out floor. */
+    fun clampScale(s: Float): Float = s.coerceIn(minScale, maxScale)
 
     /** Sets M = | s 0 tx | directly (used by the double-tap animator). */
     ///        | 0 s ty |

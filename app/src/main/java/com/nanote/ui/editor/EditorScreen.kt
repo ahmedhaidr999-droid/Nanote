@@ -21,6 +21,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoStories
 import androidx.compose.material.icons.filled.CleaningServices
+import androidx.compose.material.icons.filled.FrontHand
 import androidx.compose.material.icons.filled.Redo
 import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material.icons.filled.MoreVert
@@ -67,6 +68,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.nanote.R
+import com.nanote.data.files.ToolbarPosition
 import com.nanote.ink.engine.EditorTool
 import com.nanote.ink.engine.PenType
 import com.nanote.ink.render.InkCanvasView
@@ -87,6 +89,8 @@ fun EditorScreen(
     val pageIndex by vm.pageIndex.collectAsState()
     val tool by vm.tool.collectAsState()
     val fingersDraw by vm.fingersDraw.collectAsState()
+    val stylusOnly by vm.stylusOnly.collectAsState()
+    val toolbarPos by vm.toolbarPosition.collectAsState()
     val undoDepth by vm.undoDepth.collectAsState()
     val redoDepth by vm.redoDepth.collectAsState()
     val session = vm.session
@@ -224,6 +228,14 @@ fun EditorScreen(
                             Icon(Icons.Filled.AutoStories, contentDescription = stringResource(R.string.pages_title))
                         }
                     }
+                    IconButton(onClick = { vm.toggleStylusOnly() }) {
+                        Icon(
+                            Icons.Filled.FrontHand,
+                            contentDescription = stringResource(R.string.stylus_only),
+                            tint = if (stylusOnly) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                     IconButton(onClick = { focusMode = !focusMode }) {
                         Icon(Icons.Filled.VisibilityOff, contentDescription = stringResource(R.string.focus_mode))
                     }
@@ -277,14 +289,14 @@ fun EditorScreen(
                     }
                 }
 
-                // page pill
+                // page pill (shifted below the palette when the toolbar is on top)
                 Surface(
                     shape = CircleShape,
                     color = MaterialTheme.colorScheme.surfaceVariant,
                     shadowElevation = 2.dp,
                     modifier = Modifier
                         .align(Alignment.TopCenter)
-                        .padding(top = 60.dp)
+                        .padding(top = if (toolbarPos == ToolbarPosition.TOP) 176.dp else 60.dp)
                 ) {
                     Row(
                         Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
@@ -313,7 +325,10 @@ fun EditorScreen(
 
                 // selection contextual bar
                 if (hasSelection) {
-                    Box(Modifier.align(Alignment.TopCenter).padding(top = 100.dp)) {
+                    Box(
+                        Modifier.align(Alignment.TopCenter)
+                            .padding(top = if (toolbarPos == ToolbarPosition.TOP) 220.dp else 100.dp)
+                    ) {
                         SelectionBar(
                             onCopy = { vm.copySelection() },
                             onPaste = { vm.pasteClipboard() },
@@ -324,23 +339,77 @@ fun EditorScreen(
                     }
                 }
 
-                // bottom tool palette
+                // tool palette — position configurable in Settings (v1.1)
                 if (!focusMode) {
-                    Column(
-                        Modifier
-                            .align(Alignment.BottomCenter)
-                            .padding(bottom = 8.dp)
-                    ) {
-                        ToolPalette(
-                            tool = tool,
-                            fingersDraw = fingersDraw,
-                            onTool = vm::selectTool,
-                            onPen = vm::selectPen,
-                            onColor = vm::selectColor,
-                            onWidth = vm::selectWidth,
-                            onFingersDraw = vm::toggleFingersDraw,
-                            onShapeKind = vm::setShapeKind
-                        )
+                    when (toolbarPos) {
+                        ToolbarPosition.TOP -> Column(
+                            Modifier
+                                .align(Alignment.TopCenter)
+                                .padding(top = 64.dp)
+                        ) {
+                            ToolPalette(
+                                tool = tool,
+                                fingersDraw = fingersDraw,
+                                onTool = vm::selectTool,
+                                onPen = vm::selectPen,
+                                onColor = vm::selectColor,
+                                onWidth = vm::selectWidth,
+                                onFingersDraw = vm::toggleFingersDraw,
+                                onShapeKind = vm::setShapeKind
+                            )
+                        }
+                        ToolbarPosition.BOTTOM -> Column(
+                            Modifier
+                                .align(Alignment.BottomCenter)
+                                .padding(bottom = 8.dp)
+                        ) {
+                            ToolPalette(
+                                tool = tool,
+                                fingersDraw = fingersDraw,
+                                onTool = vm::selectTool,
+                                onPen = vm::selectPen,
+                                onColor = vm::selectColor,
+                                onWidth = vm::selectWidth,
+                                onFingersDraw = vm::toggleFingersDraw,
+                                onShapeKind = vm::setShapeKind
+                            )
+                        }
+                        ToolbarPosition.LEFT -> Box(
+                            Modifier
+                                .align(Alignment.CenterStart)
+                                .padding(start = 8.dp)
+                        ) {
+                            ToolPalette(
+                                tool = tool,
+                                fingersDraw = fingersDraw,
+                                onTool = vm::selectTool,
+                                onPen = vm::selectPen,
+                                onColor = vm::selectColor,
+                                onWidth = vm::selectWidth,
+                                onFingersDraw = vm::toggleFingersDraw,
+                                onShapeKind = vm::setShapeKind,
+                                vertical = true,
+                                popoverOnEnd = true
+                            )
+                        }
+                        ToolbarPosition.RIGHT -> Box(
+                            Modifier
+                                .align(Alignment.CenterEnd)
+                                .padding(end = 8.dp)
+                        ) {
+                            ToolPalette(
+                                tool = tool,
+                                fingersDraw = fingersDraw,
+                                onTool = vm::selectTool,
+                                onPen = vm::selectPen,
+                                onColor = vm::selectColor,
+                                onWidth = vm::selectWidth,
+                                onFingersDraw = vm::toggleFingersDraw,
+                                onShapeKind = vm::setShapeKind,
+                                vertical = true,
+                                popoverOnEnd = false
+                            )
+                        }
                     }
                 } else {
                     Box(

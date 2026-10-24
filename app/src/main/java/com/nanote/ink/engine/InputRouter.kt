@@ -32,13 +32,23 @@ class PointerSpec(
     val pointerCount: Int
 )
 
-enum class Route { DRAW, ERASE, NAVIGATE, IGNORE }
+enum class Route { DRAW, ERASE, NAVIGATE, IGNORE, LASSO, COMMAND }
 
 /**
- * Routing rules (per spec section 6.1):
+ * What the stylus barrel button does (v1.1 stylus database feature):
+ *  - ERASE     — hold to erase (classic behavior)
+ *  - LASSO     — hold to lasso-select
+ *  - UNDO/REDO — fire once when pressed, gesture ignored afterwards
+ *  - DISABLED  — the button does nothing; the pen keeps drawing
+ */
+enum class StylusBarrelAction { ERASE, LASSO, UNDO, REDO, DISABLED }
+
+/**
+ * Routing rules (per spec section 6.1, extended in v1.1):
  *  - eraser tool                     -> ERASE
- *  - stylus (primary barrel button)  -> ERASE
+ *  - stylus (barrel button, per action) -> ERASE / LASSO / COMMAND / DRAW
  *  - stylus                          -> DRAW
+ *  - stylus-only mode ON             -> every finger/palm pointer is IGNOREd
  *  - palm                            -> IGNORE
  *  - contact patch larger than palmMajorPx -> IGNORE
  *  - finger within 350 ms of stylus  -> IGNORE (palm lands as the pen lifts)
@@ -49,7 +59,11 @@ enum class Route { DRAW, ERASE, NAVIGATE, IGNORE }
  */
 class InputRouter(
     private val fingersDraw: () -> Boolean,
-    private val palmMajorPx: Float = 30f
+    private val palmMajorPx: Float = 30f,
+    /** v1.1: total palm rejection — the screen accepts the stylus only. */
+    private val stylusOnly: () -> Boolean = { false },
+    /** v1.1: user-customizable barrel button action. */
+    private val barrelAction: () -> StylusBarrelAction = { StylusBarrelAction.ERASE }
 ) {
     private var lastStylusMs = 0L
     private var stylusHovering = false
@@ -76,10 +90,23 @@ class InputRouter(
         return when (e.toolType) {
             ToolTypes.ERASER -> Route.ERASE
             ToolTypes.STYLUS ->
-                if ((e.buttonState and Buttons.STYLUS_PRIMARY) != 0) Route.ERASE else Route.DRAW
+                if ((e.buttonState and Buttons.STYLUS_PRIMARY) == 0) Route.DRAW
+                else when (barrelAction()) {
+                    StylusBarrelAction.ERASE -> Route.ERASE
+                    StylusBarrelAction.LASSO -> Route.LASSO
+                    StylusBarrelAction.UNDO, StylusBarrelAction.REDO -> Route.COMMAND
+                    StylusBarrelAction.DISABLED -> Route.DRAW
+                }
             ToolTypes.PALM -> Route.IGNORE
             ToolTypes.FINGER ->
                 when {
+                    // v1.1 pen-only mode: fingers never WRITE. A single finger
+                    // (the classic palm silhouette) is ignored outright; only a
+                    // deliberate two-finger pinch of small contacts still pans
+                    // and zooms — and only while the pen is lifted.
+                    stylusOnly() ->
+                        if (!stylusDown && e.pointerCount >= 2 && e.touchMajor <= palmMajorPx)
+                            Route.NAVIGATE else Route.IGNORE
                     stylusActive -> Route.IGNORE
                     e.touchMajor > palmMajorPx -> Route.IGNORE
                     fingersDraw() && e.pointerCount == 1 -> Route.DRAW

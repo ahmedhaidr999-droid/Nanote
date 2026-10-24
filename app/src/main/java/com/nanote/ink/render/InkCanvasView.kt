@@ -80,6 +80,16 @@ class InkCanvasView @JvmOverloads constructor(
         fun fingersDraw(): Boolean
         fun surfaceColor(): Int
 
+        /** v1.1: full palm rejection — canvas accepts the stylus only. */
+        fun stylusOnly(): Boolean
+
+        /** v1.1: user-customizable stylus barrel-button action. */
+        fun stylusBarrelAction(): com.nanote.ink.engine.StylusBarrelAction
+
+        /** v1.1: fired once when the barrel button is pressed with an
+         *  UNDO/REDO action mapped. */
+        fun onBarrelCommand(action: com.nanote.ink.engine.StylusBarrelAction)
+
         /** Ids temporarily hidden from tile snapshots (lasso/pixel-erase previews). */
         val hiddenStrokeIds: MutableSet<Int>
         val hiddenObjectIds: MutableSet<String>
@@ -171,7 +181,11 @@ class InkCanvasView @JvmOverloads constructor(
 
     // ----- routing state -----
     private val routes = SparseArray<Route>()
-    private val router = InputRouter(fingersDraw = { host?.fingersDraw() ?: true })
+    private val router = InputRouter(
+        fingersDraw = { host?.fingersDraw() ?: true },
+        stylusOnly = { host?.stylusOnly() ?: false },
+        barrelAction = { host?.stylusBarrelAction() ?: com.nanote.ink.engine.StylusBarrelAction.ERASE }
+    )
     private val gestures = GestureController()
     private var navPointerCount = 0
     private var drawingPointerId = -1
@@ -553,6 +567,7 @@ class InkCanvasView @JvmOverloads constructor(
                 }
                 EditorTool.IMAGE -> { /* tap handled on UP */ }
                 EditorTool.ERASER -> beginErase(e, 0, h)
+                EditorTool.HIGHLIGHTER -> beginStroke(e, 0, h) // separated highlighter tool
                 EditorTool.PEN -> {
                     // object drag? (text/image under the pen)
                     if (ok) {
@@ -571,6 +586,14 @@ class InkCanvasView @JvmOverloads constructor(
                 }
             }
             Route.ERASE -> beginErase(e, 0, h)
+            Route.LASSO -> {
+                // v1.1: barrel-button lasso — the current tool does not matter
+                if (ok && lasso == null) beginLasso(h, px, py)
+            }
+            Route.COMMAND -> {
+                // v1.1: barrel-button undo/redo fires once on press
+                h.onBarrelCommand(h.stylusBarrelAction())
+            }
             Route.NAVIGATE -> {
                 gestures.begin(e.x, e.y, e.x, e.y)
                 navPointerCount = 1
@@ -602,7 +625,18 @@ class InkCanvasView @JvmOverloads constructor(
 
         when (route) {
             Route.NAVIGATE -> {
-                navPointerCount++
+                // v1.1: in pen-only mode the first finger landed as IGNORE
+                // (anti-palm); a second small finger is a deliberate pinch —
+                // promote the first so pan/zoom keeps working.
+                if (h.stylusOnly()) {
+                    promoteIgnoredFingers(e)
+                    navPointerCount = 0
+                    for (p in 0 until e.pointerCount) {
+                        if (routes.get(e.getPointerId(p)) == Route.NAVIGATE) navPointerCount++
+                    }
+                } else {
+                    navPointerCount++
+                }
                 if (navPointerCount == 2) {
                     val a = navigatePointer(e, 0)
                     val b = navigatePointer(e, 1)
@@ -611,6 +645,12 @@ class InkCanvasView @JvmOverloads constructor(
             }
             Route.DRAW -> if (!liveActive) beginStroke(e, i, h)
             Route.ERASE -> if (!erasing) beginErase(e, i, h)
+            Route.LASSO -> {
+                if (lasso == null && h.transform.toPage(e.getX(i), e.getY(i), pagePoint)) {
+                    beginLasso(h, pagePoint[0], pagePoint[1])
+                }
+            }
+            Route.COMMAND -> Unit // fired once on DOWN
             Route.IGNORE -> Unit
         }
         return true
@@ -814,7 +854,7 @@ class InkCanvasView @JvmOverloads constructor(
             return true
         }
 
-        if (ls != null && !ls.finished && tool.tool == EditorTool.LASSO) {
+        if (ls != null && !ls.finished && (tool.tool == EditorTool.LASSO || route == Route.LASSO)) {
             finishLassoCapture(h)
             routes.clear()
             return true
@@ -1499,7 +1539,7 @@ class InkCanvasView @JvmOverloads constructor(
             val s = s0 + (s1 - s0) * f
             val tx = sx - s * p[0]
             val ty = sy - s * p[1]
-            t.setScaleTranslate(s.coerceIn(0.25f, 8f), tx, ty)
+            t.setScaleTranslate(t.clampScale(s), tx, ty)
             t.clampPan(h.doc.widthPt, h.doc.heightPt, width.toFloat(), height.toFloat())
             invalidate()
         }
@@ -1513,5 +1553,21 @@ class InkCanvasView @JvmOverloads constructor(
         private const val FROZEN_CHUNK = 128
         private const val LIVE_TAIL = 24
         private const val LASER_FADE_MS = 550f
+
+        /** Mirrors InputRouter's default palm contact-patch threshold. */
+        private const val PALM_MAJOR_PX = 30f
+    }
+
+    /** v1.1 pen-only mode: promote IGNOREd small fingers to NAVIGATE when a
+     *  deliberate second finger joins — pinch-zoom must keep working. */
+    private fun promoteIgnoredFingers(e: MotionEvent) {
+        for (p in 0 until e.pointerCount) {
+            val pid = e.getPointerId(p)
+            if (routes.get(pid) == Route.IGNORE &&
+                e.getToolType(p) == ToolTypes.FINGER &&
+                e.getTouchMajor(p) <= PALM_MAJOR_PX) {
+                routes.put(pid, Route.NAVIGATE)
+            }
+        }
     }
 }

@@ -14,9 +14,11 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
@@ -27,7 +29,6 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Done
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FormatShapes
 import androidx.compose.material.icons.filled.Gesture
 import androidx.compose.material.icons.filled.Image
@@ -35,6 +36,7 @@ import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material.icons.filled.Highlight
 import androidx.compose.material.icons.filled.TextFields
+import androidx.compose.material.icons.filled.WifiTethering
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -54,10 +56,12 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.nanote.R
 import com.nanote.ink.engine.EditorTool
+import com.nanote.ink.engine.PenType
 import com.nanote.ink.engine.ShapeKind
 
 private val TOOLS = listOf(
     EditorTool.PEN,
+    EditorTool.HIGHLIGHTER, // v1.1: separated highlighter tool
     EditorTool.ERASER,
     EditorTool.LASSO,
     EditorTool.SHAPE,
@@ -67,9 +71,14 @@ private val TOOLS = listOf(
 )
 
 /**
- * The floating tool palette (spec 8): pen, eraser, lasso, shapes, text,
- * image and laser. Tapping the active tool opens a popover with width
- * presets, the palette grid, a custom color picker. Long-press reorders.
+ * The floating tool palette (spec 8): pen, highlighter (separated in v1.1),
+ * eraser, lasso, shapes, text, image and laser. Tapping the active tool opens
+ * a popover with width presets, the palette grid and a custom color picker.
+ * Long-press reorders.
+ *
+ * [vertical] renders a side rail (toolbar position LEFT/RIGHT): tools stack
+ * in a column and the popover opens sideways ([popoverOnEnd] controls which
+ * side).
  */
 @OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
 @Composable
@@ -77,106 +86,186 @@ fun ToolPalette(
     tool: com.nanote.ink.engine.ToolSpec,
     fingersDraw: Boolean,
     onTool: (EditorTool) -> Unit,
-    onPen: (com.nanote.ink.engine.PenType) -> Unit,
+    onPen: (PenType) -> Unit,
     onColor: (Int) -> Unit,
     onWidth: (Float) -> Unit,
     onFingersDraw: () -> Unit,
-    onShapeKind: (ShapeKind) -> Unit
+    onShapeKind: (ShapeKind) -> Unit,
+    vertical: Boolean = false,
+    popoverOnEnd: Boolean = false
 ) {
     var popover by remember { mutableStateOf(false) }
     var orderNames by androidx.compose.runtime.saveable.rememberSaveable {
         mutableStateOf(TOOLS.map { it.name })
     }
-    val order = orderNames.mapNotNull { name ->
-        EditorTool.entries.firstOrNull { it.name == name }
-    }.ifEmpty { TOOLS }
-
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        if (popover) {
-            ToolPopover(tool, onPen, onColor, onWidth, onShapeKind, onDismiss = { popover = false })
-            Spacer(Modifier.height(8.dp))
+    // restored order + any tool introduced by an app update (e.g. HIGHLIGHTER)
+    val order = run {
+        val restored = orderNames.mapNotNull { name ->
+            EditorTool.entries.firstOrNull { it.name == name && it in TOOLS }
         }
+        val missing = TOOLS.filter { t -> restored.none { it == t } }
+        (restored + missing).ifEmpty { TOOLS }
+    }
 
-        Surface(
-            shape = RoundedCornerShape(24.dp),
-            color = MaterialTheme.colorScheme.surface,
-            shadowElevation = 6.dp
-        ) {
-            Column(Modifier.padding(8.dp)) {
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    itemsIndexed(order, key = { _, t -> t.name }) { _, t ->
-                        ToolChip(
-                            tool = t,
-                            active = tool.tool == t,
-                            onClick = {
-                                if (tool.tool == t) popover = !popover else onTool(t)
-                            },
-                            onMove = { delta ->
-                                val idx = orderNames.indexOf(t.name)
-                                val to = (idx + delta).coerceIn(0, orderNames.size - 1)
-                                if (idx >= 0 && to != idx) {
-                                    val mut = orderNames.toMutableList()
-                                    mut.removeAt(idx)
-                                    mut.add(to, t.name)
-                                    orderNames = mut
-                                }
-                            }
+    val onChipClick = { t: EditorTool ->
+        if (tool.tool == t) popover = !popover else onTool(t)
+    }
+    val onChipMove = { t: EditorTool, delta: Int ->
+        val idx = orderNames.indexOf(t.name)
+        val to = (idx + delta).coerceIn(0, orderNames.size - 1)
+        if (idx >= 0 && to != idx) {
+            val mut = orderNames.toMutableList()
+            mut.removeAt(idx)
+            mut.add(to, t.name)
+            orderNames = mut
+        }
+    }
+
+    if (vertical) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (popover && !popoverOnEnd) {
+                ToolPopover(tool, onPen, onColor, onWidth, onShapeKind, onDismiss = { popover = false })
+                Spacer(Modifier.width(8.dp))
+            }
+            Surface(
+                shape = RoundedCornerShape(24.dp),
+                color = MaterialTheme.colorScheme.surface,
+                shadowElevation = 6.dp
+            ) {
+                Column(Modifier.padding(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    // never taller than ~2/3 of the screen; extra tools scroll
+                    val maxRailH = (androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp * 0.66f).dp
+                    LazyColumn(
+                        modifier = Modifier.heightIn(max = maxRailH),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        itemsIndexed(order, key = { _, t -> t.name }) { _, t ->
+                            ToolChip(t, tool.tool == t, { onChipClick(t) }, { d -> onChipMove(t, d) })
+                        }
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    // compact quick colors + fingers toggle stacked sideways
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        quickColors(tool).take(4).forEach { c ->
+                            ColorDot(c, tool.colorArgb == c) { onColor(c) }
+                        }
+                        Box(
+                            Modifier
+                                .size(24.dp)
+                                .clip(CircleShape)
+                                .clickable { popover = !popover },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                Icons.Filled.Palette,
+                                contentDescription = stringResource(R.string.custom_color),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                        Icon(
+                            Icons.Filled.TouchApp,
+                            contentDescription = stringResource(R.string.toggle_fingers_draw),
+                            tint = if (fingersDraw) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .size(24.dp)
+                                .clip(CircleShape)
+                                .clickable(onClick = onFingersDraw)
+                                .padding(3.dp)
                         )
                     }
                 }
-                Spacer(Modifier.height(6.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    val palette = if (tool.pen == com.nanote.ink.engine.PenType.HIGHLIGHTER)
-                        com.nanote.ink.engine.HIGHLIGHTS
-                    else com.nanote.ink.engine.PALETTE
-                    palette.take(6).forEach { c ->
-                        Box(
-                            Modifier
-                                .size(22.dp)
+            }
+            if (popover && popoverOnEnd) {
+                Spacer(Modifier.width(8.dp))
+                ToolPopover(tool, onPen, onColor, onWidth, onShapeKind, onDismiss = { popover = false })
+            }
+        }
+    } else {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            if (popover) {
+                ToolPopover(tool, onPen, onColor, onWidth, onShapeKind, onDismiss = { popover = false })
+                Spacer(Modifier.height(8.dp))
+            }
+
+            Surface(
+                shape = RoundedCornerShape(24.dp),
+                color = MaterialTheme.colorScheme.surface,
+                shadowElevation = 6.dp
+            ) {
+                Column(Modifier.padding(8.dp)) {
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        itemsIndexed(order, key = { _, t -> t.name }) { _, t ->
+                            ToolChip(t, tool.tool == t, { onChipClick(t) }, { d -> onChipMove(t, d) })
+                        }
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        quickColors(tool).take(6).forEach { c ->
+                            ColorDot(c, tool.colorArgb == c) { onColor(c) }
+                        }
+                        Spacer(Modifier.width(6.dp))
+                        Icon(
+                            Icons.Filled.Palette,
+                            contentDescription = stringResource(R.string.custom_color),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .size(24.dp)
                                 .clip(CircleShape)
-                                .background(Color(c))
-                                .border(
-                                    width = if (tool.colorArgb == c) 3.dp else 1.dp,
-                                    color = if (tool.colorArgb == c) MaterialTheme.colorScheme.primary
-                                    else MaterialTheme.colorScheme.outline,
-                                    shape = CircleShape
-                                )
-                                .clickable { onColor(c) }
+                                .clickable { popover = !popover }
+                                .padding(3.dp)
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        var width by remember(tool.widthPt) { mutableStateOf(tool.widthPt) }
+                        Slider(
+                            value = width,
+                            onValueChange = { width = it; onWidth(it) },
+                            valueRange = 0.5f..26f,
+                            modifier = Modifier.width(120.dp)
+                        )
+                        Icon(
+                            Icons.Filled.TouchApp,
+                            contentDescription = stringResource(R.string.toggle_fingers_draw),
+                            tint = if (fingersDraw) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .size(24.dp)
+                                .clip(CircleShape)
+                                .clickable(onClick = onFingersDraw)
+                                .padding(3.dp)
                         )
                     }
-                    Spacer(Modifier.width(6.dp))
-                    Icon(
-                        Icons.Filled.Palette,
-                        contentDescription = stringResource(R.string.custom_color),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier
-                            .size(24.dp)
-                            .clip(CircleShape)
-                            .clickable { popover = !popover }
-                            .padding(3.dp)
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    var width by remember(tool.widthPt) { mutableStateOf(tool.widthPt) }
-                    Slider(
-                        value = width,
-                        onValueChange = { width = it; onWidth(it) },
-                        valueRange = 0.5f..26f,
-                        modifier = Modifier.width(120.dp)
-                    )
-                    Icon(
-                        Icons.Filled.TouchApp,
-                        contentDescription = stringResource(R.string.toggle_fingers_draw),
-                        tint = if (fingersDraw) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier
-                            .size(24.dp)
-                            .clip(CircleShape)
-                            .clickable(onClick = onFingersDraw)
-                            .padding(3.dp)
-                    )
                 }
             }
         }
     }
+}
+
+/** Highlighter tool gets the highlight palette; every other tool the ink palette. */
+private fun quickColors(tool: com.nanote.ink.engine.ToolSpec): IntArray =
+    if (tool.pen == PenType.HIGHLIGHTER)
+        com.nanote.ink.engine.HIGHLIGHTS
+    else com.nanote.ink.engine.PALETTE
+
+@Composable
+private fun ColorDot(c: Int, selected: Boolean, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .size(if (selected) 26.dp else 22.dp)
+            .clip(CircleShape)
+            .background(Color(c))
+            .border(
+                width = if (selected) 3.dp else 1.dp,
+                color = if (selected) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.outline,
+                shape = CircleShape
+            )
+            .clickable(onClick = onClick)
+    )
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -189,15 +278,17 @@ private fun ToolChip(
 ) {
     val icon = when (tool) {
         EditorTool.PEN -> Icons.Outlined.Edit
+        EditorTool.HIGHLIGHTER -> Icons.Filled.Highlight
         EditorTool.ERASER -> Icons.Filled.CleaningServices
         EditorTool.LASSO -> Icons.Filled.Gesture
         EditorTool.SHAPE -> Icons.Filled.FormatShapes
         EditorTool.TEXT -> Icons.Filled.TextFields
         EditorTool.IMAGE -> Icons.Filled.Image
-        EditorTool.LASER -> Icons.Filled.Highlight
+        EditorTool.LASER -> Icons.Filled.WifiTethering
     }
     val label = when (tool) {
         EditorTool.PEN -> stringResource(R.string.tool_pen)
+        EditorTool.HIGHLIGHTER -> stringResource(R.string.tool_highlighter)
         EditorTool.ERASER -> stringResource(R.string.tool_eraser)
         EditorTool.LASSO -> stringResource(R.string.tool_lasso)
         EditorTool.SHAPE -> stringResource(R.string.tool_shape)
@@ -240,15 +331,15 @@ private fun ToolChip(
 }
 
 /**
- * Popover for the active tool: pen selector, eraser mode + radius, shape kind,
- * width presets from the spec arrays, palette grid, custom HSV picker and
- * 3 per-tool presets.
+ * Popover for the active tool: pen selector (writing pens only — the
+ * highlighter is its own tool since v1.1), eraser radius, shape kind, width
+ * presets from the spec arrays, palette grid, custom HSV picker.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ToolPopover(
     tool: com.nanote.ink.engine.ToolSpec,
-    onPen: (com.nanote.ink.engine.PenType) -> Unit,
+    onPen: (PenType) -> Unit,
     onColor: (Int) -> Unit,
     onWidth: (Float) -> Unit,
     onShapeKind: (ShapeKind) -> Unit,
@@ -282,8 +373,12 @@ fun ToolPopover(
                         }
                     }
                 }
+                EditorTool.HIGHLIGHTER -> {
+                    // separated tool: no pen variants, highlight palette below
+                }
                 else -> Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    com.nanote.ink.engine.PenType.entries.forEach { p ->
+                    // writing pens only — the highlighter lives in its own tool
+                    PenType.entries.filter { it != PenType.HIGHLIGHTER }.forEach { p ->
                         Surface(
                             shape = CircleShape,
                             color = if (tool.pen == p) MaterialTheme.colorScheme.primaryContainer
@@ -302,8 +397,8 @@ fun ToolPopover(
 
             Spacer(Modifier.height(8.dp))
 
-            // width presets from PEN_WIDTHS_PT (or eraser radii in M3)
-            val widths = if (tool.pen == com.nanote.ink.engine.PenType.HIGHLIGHTER)
+            // width presets (highlighter presets when the highlighter tool is active)
+            val widths = if (tool.pen == PenType.HIGHLIGHTER)
                 com.nanote.ink.engine.HIGHLIGHT_WIDTHS_PT
             else com.nanote.ink.engine.PEN_WIDTHS_PT
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -329,23 +424,12 @@ fun ToolPopover(
 
             Spacer(Modifier.height(8.dp))
 
-            // full palette grid
-            androidx.compose.foundation.layout.FlowRow(
+            // full palette grid — inks + highlight colors
+            FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 (com.nanote.ink.engine.PALETTE.toList() + com.nanote.ink.engine.HIGHLIGHTS.toList()).forEach { c ->
-                    Box(
-                        Modifier
-                            .size(24.dp)
-                            .clip(CircleShape)
-                            .background(Color(c))
-                            .border(
-                                width = if (tool.colorArgb == c) 3.dp else 0.dp,
-                                color = MaterialTheme.colorScheme.primary,
-                                shape = CircleShape
-                            )
-                            .clickable { onColor(c) }
-                    )
+                    ColorDot(c, tool.colorArgb == c) { onColor(c) }
                 }
             }
 
@@ -401,12 +485,12 @@ fun ToolPopover(
 }
 
 @Composable
-private fun penLabel(p: com.nanote.ink.engine.PenType): String = when (p) {
-    com.nanote.ink.engine.PenType.BALLPOINT -> stringResource(R.string.pen_ballpoint)
-    com.nanote.ink.engine.PenType.FOUNTAIN -> stringResource(R.string.pen_fountain)
-    com.nanote.ink.engine.PenType.PENCIL -> stringResource(R.string.pen_pencil)
-    com.nanote.ink.engine.PenType.MARKER -> stringResource(R.string.pen_marker)
-    com.nanote.ink.engine.PenType.HIGHLIGHTER -> stringResource(R.string.pen_highlighter)
+private fun penLabel(p: PenType): String = when (p) {
+    PenType.BALLPOINT -> stringResource(R.string.pen_ballpoint)
+    PenType.FOUNTAIN -> stringResource(R.string.pen_fountain)
+    PenType.PENCIL -> stringResource(R.string.pen_pencil)
+    PenType.MARKER -> stringResource(R.string.pen_marker)
+    PenType.HIGHLIGHTER -> stringResource(R.string.pen_highlighter)
 }
 
 @Composable

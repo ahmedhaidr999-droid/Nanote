@@ -106,3 +106,45 @@ class ViewTransformTest {
         assertThat(vt.m.v[3]).isEqualTo(0f)
     }
 }
+
+    // ------------------------------------- v1.1: fit ALL PDF page sizes
+
+    @Test
+    fun `A0 poster page fits width without the old 0point25 clamp`() {
+        val vt = ViewTransform()
+        // A0 poster = 3370 x 2384 PDF points, landscape tablet viewport
+        vt.fitToWidth(3370f, 2384f, 2560f, 1600f)
+        assertThat(vt.scale).isWithin(1e-4f).of(2560f / 3370f) // 0.76 > 0.25 anyway
+    }
+
+    @Test
+    fun `giant CAD sheet fits even below the default zoom floor`() {
+        val vt = ViewTransform()
+        vt.fitToWidth(20000f, 9000f, 2560f, 1600f) // fit = 0.128 < 0.25
+        assertThat(vt.scale).isWithin(1e-4f).of(2560f / 20000f)
+        assertThat(vt.oversizedPage).isTrue()
+        // zooming out further stays possible down to the adaptive floor
+        vt.zoom(0.5f, 0f, 0f)
+        assertThat(vt.scale).isAtMost(2560f / 20000f + 1e-4f)
+    }
+
+    @Test
+    fun `giant page fitToPage shows the whole sheet`() {
+        val vt = ViewTransform()
+        vt.fitToPage(20000f, 9000f, 2560f, 1600f)
+        val out = FloatArray(2)
+        vt.toScreen(20000f, 9000f, out)
+        assertThat(out[0]).isAtMost(2560.001f)
+        assertThat(out[1]).isAtMost(1600.001f)
+        assertThat(out[0]).isAtLeast(-0.001f)
+        assertThat(out[1]).isAtLeast(-0.001f)
+    }
+
+    @Test
+    fun `small pages keep the default zoom floor`() {
+        val vt = ViewTransform()
+        vt.fitToPage(300f, 200f, 2560f, 1600f)
+        assertThat(vt.oversizedPage).isFalse()
+        vt.zoom(0.0001f, 0f, 0f)
+        assertThat(vt.scale).isAtLeast(0.2499f)
+    }

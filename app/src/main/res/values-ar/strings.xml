@@ -123,6 +123,25 @@
     <string name="app_locked_title">نانوت مقفل</string>
     <string name="app_unlock">فتح</string>
     <string name="action_add_tag">إضافة وسم</string>
+    <!-- v1.1: قلم التظليل المستقل، موضع شريط الأدوات، وضع القلم فقط، قاعدة بيانات الأقلام -->
+    <string name="tool_highlighter">قلم التظليل</string>
+    <string name="stylus_only">القلم فقط (راحة اليد)</string>
+    <string name="toolbar_position">موضع شريط الأدوات</string>
+    <string name="pos_top">أعلى</string>
+    <string name="pos_bottom">أسفل</string>
+    <string name="pos_left">يسار</string>
+    <string name="pos_right">يمين</string>
+    <string name="stylus_section">القلم</string>
+    <string name="stylus_button_setting">زر القلم</string>
+    <string name="stylus_lasso">الزر يحدد بحرية</string>
+    <string name="stylus_undo">الزر يتراجع</string>
+    <string name="stylus_redo">الزر يعيد</string>
+    <string name="stylus_detected">المكتشف: %1$s</string>
+    <string name="stylus_pressure_levels">مستويات الضغط: %1$d</string>
+    <string name="stylus_button_count">الأزرار: %1$d</string>
+    <string name="stylus_tilt_hover">يدعم الميل والتحويم</string>
+    <string name="stylus_palm_supported">خاصية راحة اليد مدعومة</string>
+    <string name="stylus_none_detected">لم يُكتشف قلم رسم أصلي لهذا الجهاز. خاصية راحة اليد وأزرار القلم تعمل أيضاً.</string>
     <plurals name="page_count_pl">
         <item quantity="zero">%1$d صفحات</item>
         <item quantity="one">صفحة واحدة</item>

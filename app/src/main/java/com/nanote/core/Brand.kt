@@ -8,7 +8,7 @@ package com.nanote.core
 object Brand {
     const val APP_NAME = "Nanote"
     const val APPLICATION_ID = "com.nanote"
-    const val VERSION = "1.0"
+    const val VERSION = "1.1"
 
     /** File extension of shareable/exportable single notebooks. */
     const val NOTE_EXT = "nanote"

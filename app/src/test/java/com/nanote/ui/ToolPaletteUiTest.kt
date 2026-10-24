@@ -32,18 +32,20 @@ class ToolPaletteUiTest {
                 ToolPalette(
                     tool = current.value,
                     fingersDraw = true,
-                    onTool = { t -> current.value = current.value.copy(tool = t) },
-                    onPen = { p -> current.value = current.value.copy(pen = p) },
-                    onColor = { c -> current.value = current.value.copy(colorArgb = c) },
-                    onWidth = { w -> current.value = current.value.copy(widthPt = w) },
+                    onTool = { t -> current.value = ToolSpec.withTool(current.value, t) },
+                    onPen = { p -> current.value = ToolSpec.withPen(current.value, p) },
+                    onColor = { c -> current.value = ToolSpec.withColor(current.value, c) },
+                    onWidth = { w -> current.value = ToolSpec.withWidth(current.value, w) },
                     onFingersDraw = { },
                     onShapeKind = { k -> current.value = current.value.copy(shapeKind = k) }
                 )
             }
         }
 
-        // TalkBack descriptions exist for every tool
-        for (label in listOf("Pen", "Eraser", "Lasso", "Shapes", "Text", "Image", "Laser")) {
+        // TalkBack descriptions exist for every tool (highlighter separated in v1.1)
+        for (label in listOf(
+            "Pen", "Highlighter", "Eraser", "Lasso", "Shapes", "Text", "Image", "Laser"
+        )) {
             compose.onNodeWithContentDescription(label).assertExists()
         }
 
@@ -53,5 +55,21 @@ class ToolPaletteUiTest {
         assert(current.value.tool == EditorTool.LASSO) {
             "Expected LASSO after tap, was ${current.value.tool}"
         }
+
+        // v1.1: the separated highlighter tool selects and switches back cleanly
+        compose.onNodeWithContentDescription("Highlighter").performClick()
+        compose.runOnIdle { }
+        assert(current.value.tool == EditorTool.HIGHLIGHTER) {
+            "Expected HIGHLIGHTER after tap, was ${current.value.tool}"
+        }
+        assert(current.value.pen == com.nanote.ink.engine.PenType.HIGHLIGHTER) {
+            "Expected HIGHLIGHTER pen engine, was ${current.value.pen}"
+        }
+        compose.onNodeWithContentDescription("Pen").performClick()
+        compose.runOnIdle { }
+        assert(current.value.tool == EditorTool.PEN) {
+            "Expected PEN after tap, was ${current.value.tool}"
+        }
+        assert(current.value.pen != com.nanote.ink.engine.PenType.HIGHLIGHTER)
     }
 }

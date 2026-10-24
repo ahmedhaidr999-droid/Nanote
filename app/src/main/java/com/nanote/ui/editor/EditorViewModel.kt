@@ -12,6 +12,8 @@ import com.nanote.di.ThumbsDir
 import com.nanote.domain.model.Page
 import com.nanote.ink.engine.AddStrokes
 import com.nanote.ink.engine.PAGE_SIZES_PT
+import com.nanote.core.StylusRegistry
+import com.nanote.data.files.ToolbarPosition
 import com.nanote.domain.model.ImageObj
 import com.nanote.domain.model.LinkObj
 import com.nanote.domain.model.LinkTarget
@@ -83,6 +85,42 @@ class EditorViewModel @Inject constructor(
     private val _fingersDraw = MutableStateFlow(true)
     val fingersDraw: StateFlow<Boolean> = _fingersDraw.asStateFlow()
 
+    /** v1.1: full palm rejection — pen-only input (mirrored in Settings). */
+    private val _stylusOnly = MutableStateFlow(false)
+    val stylusOnly: StateFlow<Boolean> = _stylusOnly.asStateFlow()
+
+    /** v1.1: where the tool palette sits (top/bottom/left/right). */
+    val toolbarPosition: StateFlow<ToolbarPosition> = recent.toolbarPosition
+        .stateIn(viewModelScope, SharingStarted.Eagerly, ToolbarPosition.TOP)
+
+    /** v1.1: barrel-button action consumed by the input router. */
+    @Volatile private var barrelAction: com.nanote.ink.engine.StylusBarrelAction =
+        com.nanote.ink.engine.StylusBarrelAction.ERASE
+
+    init {
+        // mirror persisted input settings into the live editor state
+        viewModelScope.launch {
+            recent.fingersDraw.collect { _fingersDraw.value = it }
+        }
+        viewModelScope.launch {
+            recent.stylusOnly.collect { _stylusOnly.value = it }
+        }
+        viewModelScope.launch {
+            recent.stylusButton.collect { barrelAction = it }
+        }
+        // one-shot: known stylus tablet -> enable palm rejection by default
+        viewModelScope.launch {
+            if (!recent.stylusAutoCfgDone()) {
+                recent.setStylusAutoCfgDone()
+                val pen = StylusRegistry.detectForThisDevice()
+                if (pen != null && pen.palmRejection) {
+                    recent.setStylusOnly(true)
+                    recent.setFingersDraw(false)
+                }
+            }
+        }
+    }
+
     val undoDepth = MutableStateFlow(0)
     val redoDepth = MutableStateFlow(0)
 
@@ -114,6 +152,18 @@ class EditorViewModel @Inject constructor(
         override fun tool(): ToolSpec = _tool.value
         override fun fingersDraw(): Boolean = _fingersDraw.value
         override fun surfaceColor(): Int = surfaceArgb
+
+        override fun stylusOnly(): Boolean = _stylusOnly.value
+
+        override fun stylusBarrelAction(): com.nanote.ink.engine.StylusBarrelAction = barrelAction
+
+        override fun onBarrelCommand(action: com.nanote.ink.engine.StylusBarrelAction) {
+            when (action) {
+                com.nanote.ink.engine.StylusBarrelAction.UNDO -> undo()
+                com.nanote.ink.engine.StylusBarrelAction.REDO -> redo()
+                else -> Unit
+            }
+        }
 
         override fun onContentCommitted() {
             markDirty()
@@ -292,7 +342,7 @@ class EditorViewModel @Inject constructor(
     }
 
     fun selectTool(tool: EditorTool) {
-        _tool.value = _tool.value.copy(tool = tool)
+        _tool.value = ToolSpec.withTool(_tool.value, tool)
     }
 
     // ------------------------------------------------- text / image / links
@@ -565,21 +615,15 @@ class EditorViewModel @Inject constructor(
     }
 
     fun selectPen(pen: PenType) {
-        _tool.value = _tool.value.copy(
-            tool = EditorTool.PEN,
-            pen = pen,
-            colorArgb = if (pen == PenType.HIGHLIGHTER && _tool.value.colorArgb and 0xFF000000.toInt() == 0xFF000000.toInt())
-                0xFFFFEB3B.toInt() else _tool.value.colorArgb,
-            widthPt = if (pen == PenType.HIGHLIGHTER) _tool.value.widthPt.coerceAtLeast(8f) else _tool.value.widthPt
-        )
+        _tool.value = ToolSpec.withPen(_tool.value, pen)
     }
 
     fun selectColor(argb: Int) {
-        _tool.value = _tool.value.copy(colorArgb = argb)
+        _tool.value = ToolSpec.withColor(_tool.value, argb)
     }
 
     fun selectWidth(w: Float) {
-        _tool.value = _tool.value.copy(widthPt = w)
+        _tool.value = ToolSpec.withWidth(_tool.value, w)
     }
 
     fun setEraserWholeStroke(whole: Boolean) {
@@ -591,7 +635,13 @@ class EditorViewModel @Inject constructor(
     }
 
     fun toggleFingersDraw() {
-        _fingersDraw.value = !_fingersDraw.value
+        // persists; the settings collector mirrors it into the live state
+        viewModelScope.launch { recent.setFingersDraw(!_fingersDraw.value) }
+    }
+
+    /** v1.1: top-bar pen-only toggle — persists across launches. */
+    fun toggleStylusOnly() {
+        viewModelScope.launch { recent.setStylusOnly(!_stylusOnly.value) }
     }
 
     // ----------------------------------------------------------- undo/redo

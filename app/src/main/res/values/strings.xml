@@ -128,6 +128,25 @@
     <string name="app_locked_title">Nanote is locked</string>
     <string name="app_unlock">Unlock</string>
     <string name="action_add_tag">Add tag</string>
+    <!-- v1.1: separated highlighter, toolbar position, pen-only mode, stylus database -->
+    <string name="tool_highlighter">Highlighter</string>
+    <string name="stylus_only">Pen only (palm rejection)</string>
+    <string name="toolbar_position">Toolbar position</string>
+    <string name="pos_top">Top</string>
+    <string name="pos_bottom">Bottom</string>
+    <string name="pos_left">Left</string>
+    <string name="pos_right">Right</string>
+    <string name="stylus_section">Stylus</string>
+    <string name="stylus_button_setting">Stylus button</string>
+    <string name="stylus_lasso">Button lasso-selects</string>
+    <string name="stylus_undo">Button undoes</string>
+    <string name="stylus_redo">Button redoes</string>
+    <string name="stylus_detected">Detected: %1$s</string>
+    <string name="stylus_pressure_levels">Pressure levels: %1$d</string>
+    <string name="stylus_button_count">Buttons: %1$d</string>
+    <string name="stylus_tilt_hover">Tilt and hover supported</string>
+    <string name="stylus_palm_supported">Palm rejection supported</string>
+    <string name="stylus_none_detected">No first-party stylus detected for this device. Palm rejection and the button actions still work.</string>
     <plurals name="page_count_pl">
         <item quantity="one">%1$d page</item>
         <item quantity="other">%1$d pages</item>

@@ -43,10 +43,12 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nanote.R
 import com.nanote.core.Brand
+import com.nanote.core.StylusRegistry
 import com.nanote.data.files.SettingsStore
-import com.nanote.data.files.StylusButtonAction
+import com.nanote.data.files.ToolbarPosition
 import com.nanote.data.files.ThemePref
 import com.nanote.data.repo.NotebookRepository
+import com.nanote.ink.engine.StylusBarrelAction
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
@@ -67,7 +69,10 @@ class SettingsViewModel @Inject constructor(
     val defaultSize = settings.defaultSize.stateIn(viewModelScope, SharingStarted.Eagerly, "A4")
     val fingersDraw = settings.fingersDraw.stateIn(viewModelScope, SharingStarted.Eagerly, true)
     val palmSensitivity = settings.palmSensitivity.stateIn(viewModelScope, SharingStarted.Eagerly, 1.0f)
-    val stylusButton = settings.stylusButton.stateIn(viewModelScope, SharingStarted.Eagerly, StylusButtonAction.ERASE)
+    val stylusButton = settings.stylusButton.stateIn(viewModelScope, SharingStarted.Eagerly, StylusBarrelAction.ERASE)
+    val stylusOnly = settings.stylusOnly.stateIn(viewModelScope, SharingStarted.Eagerly, false)
+    val toolbarPosition = settings.toolbarPosition.stateIn(viewModelScope, SharingStarted.Eagerly, ToolbarPosition.TOP)
+    val detectedStylus = StylusRegistry.detectForThisDevice()
     val autosaveMs = settings.autosaveMs.stateIn(viewModelScope, SharingStarted.Eagerly, 1500L)
     val appLock = settings.appLock.stateIn(viewModelScope, SharingStarted.Eagerly, false)
     val lastBackup = settings.lastBackupMs.stateIn(viewModelScope, SharingStarted.Eagerly, 0L)
@@ -83,7 +88,9 @@ class SettingsViewModel @Inject constructor(
 
     fun setFingersDraw(v: Boolean) = viewModelScope.launch { settings.setFingersDraw(v) }
     fun setPalmSensitivity(v: Float) = viewModelScope.launch { settings.setPalmSensitivity(v) }
-    fun setStylusButton(a: StylusButtonAction) = viewModelScope.launch { settings.setStylusButton(a) }
+    fun setStylusButton(a: StylusBarrelAction) = viewModelScope.launch { settings.setStylusButton(a) }
+    fun setStylusOnly(v: Boolean) = viewModelScope.launch { settings.setStylusOnly(v) }
+    fun setToolbarPosition(p: ToolbarPosition) = viewModelScope.launch { settings.setToolbarPosition(p) }
     fun setAutosave(ms: Long) = viewModelScope.launch { settings.setAutosaveMs(ms) }
     fun setAppLock(v: Boolean) = viewModelScope.launch { settings.setAppLock(v) }
     fun setDefaultPaper(p: String) = viewModelScope.launch { settings.setDefaultPaper(p) }
@@ -121,6 +128,8 @@ fun SettingsScreen(vm: SettingsViewModel = hiltViewModel()) {
     val fingersDraw by vm.fingersDraw.collectAsState()
     val palmSensitivity by vm.palmSensitivity.collectAsState()
     val stylusButton by vm.stylusButton.collectAsState()
+    val stylusOnly by vm.stylusOnly.collectAsState()
+    val toolbarPosition by vm.toolbarPosition.collectAsState()
     val autosave by vm.autosaveMs.collectAsState()
     val appLock by vm.appLock.collectAsState()
     val lastBackup by vm.lastBackup.collectAsState()
@@ -188,9 +197,27 @@ fun SettingsScreen(vm: SettingsViewModel = hiltViewModel()) {
                 }
             }
 
+            // ---- toolbar position (v1.1)
+            SectionLabel(stringResource(R.string.toolbar_position))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                ChoiceChip(stringResource(R.string.pos_top), toolbarPosition == ToolbarPosition.TOP) {
+                    vm.setToolbarPosition(ToolbarPosition.TOP)
+                }
+                ChoiceChip(stringResource(R.string.pos_bottom), toolbarPosition == ToolbarPosition.BOTTOM) {
+                    vm.setToolbarPosition(ToolbarPosition.BOTTOM)
+                }
+                ChoiceChip(stringResource(R.string.pos_left), toolbarPosition == ToolbarPosition.LEFT) {
+                    vm.setToolbarPosition(ToolbarPosition.LEFT)
+                }
+                ChoiceChip(stringResource(R.string.pos_right), toolbarPosition == ToolbarPosition.RIGHT) {
+                    vm.setToolbarPosition(ToolbarPosition.RIGHT)
+                }
+            }
+
             // ---- input
             SectionLabel(stringResource(R.string.input_section))
             ToggleRow(stringResource(R.string.toggle_fingers_draw), fingersDraw) { vm.setFingersDraw(it) }
+            ToggleRow(stringResource(R.string.stylus_only), stylusOnly) { vm.setStylusOnly(it) }
             Text(
                 stringResource(R.string.palm_sensitivity) + ": %.1f".format(palmSensitivity),
                 style = MaterialTheme.typography.bodyMedium,
@@ -202,13 +229,63 @@ fun SettingsScreen(vm: SettingsViewModel = hiltViewModel()) {
                 valueRange = 0.5f..2.0f,
                 modifier = Modifier.fillMaxWidth()
             )
+            Text(
+                stringResource(R.string.stylus_button_setting),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                ChoiceChip(stringResource(R.string.stylus_erase), stylusButton == StylusButtonAction.ERASE) {
-                    vm.setStylusButton(StylusButtonAction.ERASE)
+                ChoiceChip(stringResource(R.string.stylus_erase), stylusButton == StylusBarrelAction.ERASE) {
+                    vm.setStylusButton(StylusBarrelAction.ERASE)
                 }
-                ChoiceChip(stringResource(R.string.stylus_disabled), stylusButton == StylusButtonAction.DISABLED) {
-                    vm.setStylusButton(StylusButtonAction.DISABLED)
+                ChoiceChip(stringResource(R.string.stylus_lasso), stylusButton == StylusBarrelAction.LASSO) {
+                    vm.setStylusButton(StylusBarrelAction.LASSO)
                 }
+                ChoiceChip(stringResource(R.string.stylus_undo), stylusButton == StylusBarrelAction.UNDO) {
+                    vm.setStylusButton(StylusBarrelAction.UNDO)
+                }
+                ChoiceChip(stringResource(R.string.stylus_redo), stylusButton == StylusBarrelAction.REDO) {
+                    vm.setStylusButton(StylusBarrelAction.REDO)
+                }
+                ChoiceChip(stringResource(R.string.stylus_disabled), stylusButton == StylusBarrelAction.DISABLED) {
+                    vm.setStylusButton(StylusBarrelAction.DISABLED)
+                }
+            }
+
+            // ---- stylus database (v1.1)
+            SectionLabel(stringResource(R.string.stylus_section))
+            val pen = detectedStylus
+            if (pen != null) {
+                Text(
+                    stringResource(R.string.stylus_detected, pen.name),
+                    style = MaterialTheme.typography.bodyLarge
+                )
+                Text(
+                    stringResource(R.string.stylus_pressure_levels, pen.pressureLevels) +
+                        " · " + stringResource(R.string.stylus_button_count, pen.buttons),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (pen.tilt || pen.hover) {
+                    Text(
+                        stringResource(R.string.stylus_tilt_hover),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                if (pen.palmRejection) {
+                    Text(
+                        stringResource(R.string.stylus_palm_supported),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            } else {
+                Text(
+                    stringResource(R.string.stylus_none_detected),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
             Text(
                 stringResource(R.string.autosave_delay) + ": ${autosave} ms",

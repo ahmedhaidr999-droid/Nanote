@@ -100,3 +100,58 @@ class InputRouterTest {
         assertThat(noMouseDraw.route(pointer(ToolTypes.MOUSE, buttons = Buttons.PRIMARY))).isEqualTo(Route.NAVIGATE)
     }
 }
+
+    // ------------------------------------------- v1.1 stylus-only mode
+
+    @Test
+    fun `stylus-only mode blocks finger writing and single-finger pans`() {
+        val r = InputRouter(fingersDraw = { true }, stylusOnly = { true })
+        // single finger (the classic palm silhouette) is fully ignored
+        assertThat(r.route(pointer(ToolTypes.FINGER))).isEqualTo(Route.IGNORE)
+        // two small contacts still navigate (deliberate pinch) with the pen up
+        assertThat(r.route(pointer(ToolTypes.FINGER, pointers = 2))).isEqualTo(Route.NAVIGATE)
+        // palm-sized contact never navigates
+        assertThat(r.route(pointer(ToolTypes.FINGER, touchMajor = 60f, pointers = 2)))
+            .isEqualTo(Route.IGNORE)
+        // the stylus keeps drawing — pen-only WRITING, not pen-only app
+        assertThat(r.route(pointer(ToolTypes.STYLUS))).isEqualTo(Route.DRAW)
+    }
+
+    @Test
+    fun `stylus-only silences two-finger pan while the pen is down`() {
+        val r = InputRouter(fingersDraw = { true }, stylusOnly = { true })
+        r.onStylusDownChanged(true, 10_000L)
+        assertThat(
+            r.route(pointer(ToolTypes.FINGER, time = 10_050L, pointers = 2, touchMajor = 10f))
+        ).isEqualTo(Route.IGNORE)
+    }
+
+    @Test
+    fun `stylus-only overrides the fingers-draw toggle`() {
+        val r = InputRouter(fingersDraw = { true }, stylusOnly = { true })
+        assertThat(r.route(pointer(ToolTypes.FINGER, time = 99_000L))).isEqualTo(Route.IGNORE)
+    }
+
+    // ---------------------------------------- v1.1 barrel-button actions
+
+    @Test
+    fun `barrel button routes by the configured action`() {
+        fun routerFor(a: StylusBarrelAction) = InputRouter(
+            fingersDraw = { false },
+            barrelAction = { a }
+        )
+        val withButton = pointer(ToolTypes.STYLUS, buttons = Buttons.STYLUS_PRIMARY)
+        assertThat(routerFor(StylusBarrelAction.ERASE).route(withButton)).isEqualTo(Route.ERASE)
+        assertThat(routerFor(StylusBarrelAction.LASSO).route(withButton)).isEqualTo(Route.LASSO)
+        assertThat(routerFor(StylusBarrelAction.UNDO).route(withButton)).isEqualTo(Route.COMMAND)
+        assertThat(routerFor(StylusBarrelAction.REDO).route(withButton)).isEqualTo(Route.COMMAND)
+        assertThat(routerFor(StylusBarrelAction.DISABLED).route(withButton)).isEqualTo(Route.DRAW)
+    }
+
+    @Test
+    fun `without the barrel button the stylus always draws`() {
+        val r = InputRouter(fingersDraw = { false }, barrelAction = { StylusBarrelAction.LASSO })
+        assertThat(r.route(pointer(ToolTypes.STYLUS))).isEqualTo(Route.DRAW)
+        val r2 = InputRouter(fingersDraw = { false }, barrelAction = { StylusBarrelAction.UNDO })
+        assertThat(r2.route(pointer(ToolTypes.STYLUS))).isEqualTo(Route.DRAW)
+    }

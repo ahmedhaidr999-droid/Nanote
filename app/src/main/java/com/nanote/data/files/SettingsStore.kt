@@ -21,8 +21,8 @@ private val Context.settingsStore: DataStore<Preferences> by preferencesDataStor
 /** Theme selection. */
 enum class ThemePref { SYSTEM, LIGHT, DARK }
 
-/** What the stylus barrel button does while drawing. */
-enum class StylusButtonAction { ERASE, LASSO, DISABLED }
+/** Where the editor tool palette sits (v1.1; default TOP per user request). */
+enum class ToolbarPosition { TOP, BOTTOM, LEFT, RIGHT }
 
 /**
  * All app settings on DataStore — everything stays on the device (spec 8:
@@ -43,6 +43,9 @@ class SettingsStore @Inject constructor(
         val FINGERS_DRAW = booleanPreferencesKey("fingers_draw")
         val PALM_SENSITIVITY = floatPreferencesKey("palm_sensitivity") // 0.5..2.0
         val STYLUS_BUTTON = stringPreferencesKey("stylus_button")
+        val STYLUS_ONLY = booleanPreferencesKey("stylus_only")
+        val TOOLBAR_POS = stringPreferencesKey("toolbar_position")
+        val STYLUS_AUTO_CFG = booleanPreferencesKey("stylus_auto_cfg")
         val AUTOSAVE_MS = longPreferencesKey("autosave_ms")
         val APP_LOCK = booleanPreferencesKey("app_lock")
         val TAG_FILTER = stringPreferencesKey("tag_filter")
@@ -108,16 +111,49 @@ class SettingsStore @Inject constructor(
         context.settingsStore.edit { it[Keys.PALM_SENSITIVITY] = v }
     }
 
-    val stylusButton: Flow<StylusButtonAction> = prefs.map { p ->
+    /** v1.1: what the stylus barrel button does (erase/lasso/undo/redo/off). */
+    val stylusButton: Flow<com.nanote.ink.engine.StylusBarrelAction> = prefs.map { p ->
         when (p[Keys.STYLUS_BUTTON]) {
-            "lasso" -> StylusButtonAction.LASSO
-            "disabled" -> StylusButtonAction.DISABLED
-            else -> StylusButtonAction.ERASE
+            "lasso" -> com.nanote.ink.engine.StylusBarrelAction.LASSO
+            "undo" -> com.nanote.ink.engine.StylusBarrelAction.UNDO
+            "redo" -> com.nanote.ink.engine.StylusBarrelAction.REDO
+            "disabled" -> com.nanote.ink.engine.StylusBarrelAction.DISABLED
+            else -> com.nanote.ink.engine.StylusBarrelAction.ERASE
         }
     }
 
-    suspend fun setStylusButton(a: StylusButtonAction) {
+    suspend fun setStylusButton(a: com.nanote.ink.engine.StylusBarrelAction) {
         context.settingsStore.edit { it[Keys.STYLUS_BUTTON] = a.name.lowercase() }
+    }
+
+    /** v1.1: full palm rejection — the canvas accepts stylus input only. */
+    val stylusOnly: Flow<Boolean> = prefs.map { p -> p[Keys.STYLUS_ONLY] ?: false }
+
+    suspend fun setStylusOnly(v: Boolean) {
+        context.settingsStore.edit { it[Keys.STYLUS_ONLY] = v }
+    }
+
+    /** v1.1: editor tool palette position (top by default). */
+    val toolbarPosition: Flow<ToolbarPosition> = prefs.map { p ->
+        when (p[Keys.TOOLBAR_POS]) {
+            "bottom" -> ToolbarPosition.BOTTOM
+            "left" -> ToolbarPosition.LEFT
+            "right" -> ToolbarPosition.RIGHT
+            else -> ToolbarPosition.TOP
+        }
+    }
+
+    suspend fun setToolbarPosition(pos: ToolbarPosition) {
+        context.settingsStore.edit { it[Keys.TOOLBAR_POS] = pos.name.lowercase() }
+    }
+
+    /** One-shot: auto-enables palm rejection when a known stylus tablet
+     *  is detected on first editor open; never overrides the user afterwards. */
+    suspend fun stylusAutoCfgDone(): Boolean =
+        prefs.map { it[Keys.STYLUS_AUTO_CFG] ?: false }.first()
+
+    suspend fun setStylusAutoCfgDone() {
+        context.settingsStore.edit { it[Keys.STYLUS_AUTO_CFG] = true }
     }
 
     val autosaveMs: Flow<Long> = prefs.map { it[Keys.AUTOSAVE_MS] ?: 1500L }
