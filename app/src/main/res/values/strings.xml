@@ -170,4 +170,11 @@
     <string name="crash_body">The previous launch crashed. Please share this report with the developer so it can be fixed, or close to continue using the app.</string>
     <string name="crash_share">Share report</string>
     <string name="crash_close">Close and continue</string>
+
+    <!-- v1.4: updates (installed version, update check via browser) -->
+    <string name="version_line">Version %1$s (build %2$d)</string>
+    <string name="version_debug">debug build — updates will not install over it</string>
+    <string name="check_updates">Check for updates</string>
+    <string name="update_hint">Updates install right over the current version — no need to uninstall, and all your notes are kept.</string>
+    <string name="no_browser">No browser found</string>
 </resources>

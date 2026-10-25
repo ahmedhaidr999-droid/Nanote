@@ -1,5 +1,10 @@
 package com.nanote.ui.settings
 
+import android.content.ActivityNotFoundException
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatDelegate
@@ -41,6 +46,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.nanote.BuildConfig
 import com.nanote.R
 import com.nanote.core.Brand
 import com.nanote.core.StylusRegistry
@@ -355,6 +361,33 @@ fun SettingsScreen(vm: SettingsViewModel = hiltViewModel()) {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+
+            // Installed version (and a debug-build marker so users can tell
+            // whether in-place updates will work for their installation).
+            val versionText = stringResource(
+                R.string.version_line,
+                BuildConfig.VERSION_NAME,
+                BuildConfig.VERSION_CODE
+            )
+            Text(
+                if (BuildConfig.DEBUG) "$versionText · ${stringResource(R.string.version_debug)}"
+                else versionText,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            // Opens the GitHub releases page in the browser — the app itself
+            // keeps zero permissions and stays fully offline (no network code).
+            androidx.compose.material3.OutlinedButton(
+                onClick = { openUpdatesPage(context) }
+            ) {
+                Text(stringResource(R.string.check_updates))
+            }
+            Text(
+                stringResource(R.string.update_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 
@@ -374,6 +407,15 @@ fun SettingsScreen(vm: SettingsViewModel = hiltViewModel()) {
                 }) { Text(stringResource(R.string.skip_existing)) }
             }
         )
+    }
+}
+
+/** Opens the releases page in the user's browser (no app permission needed). */
+private fun openUpdatesPage(context: Context) {
+    try {
+        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(Brand.RELEASES_URL)))
+    } catch (_: ActivityNotFoundException) {
+        Toast.makeText(context, R.string.no_browser, Toast.LENGTH_SHORT).show()
     }
 }
 

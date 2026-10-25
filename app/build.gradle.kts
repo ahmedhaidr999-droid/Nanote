@@ -19,8 +19,20 @@ android {
         applicationId = "com.nanote"
         minSdk = 26
         targetSdk = 35
-        versionCode = 6
-        versionName = "1.3.0"
+        // ------------------------------------------------------------------
+        // Versioning & install-over updates.
+        // CI (see .github/workflows/android.yml) derives the version from the
+        // pushed vMAJOR.MINOR.PATCH tag and passes it here via
+        // -PnanoteVersionName / -PnanoteVersionCode, so every tagged release
+        // automatically gets a versionName matching the tag and a strictly
+        // increasing versionCode (major*10000 + minor*100 + patch). Android
+        // only installs an APK over an existing installation when the signing
+        // certificate matches AND versionCode increases — that is what makes
+        // updates replace the old version in place (notes preserved, no
+        // uninstall). The fallbacks below are only for local/untagged builds.
+        // ------------------------------------------------------------------
+        versionCode = (findProperty("nanoteVersionCode") as String?)?.toInt() ?: 7
+        versionName = (findProperty("nanoteVersionName") as String?) ?: "1.4.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
     }

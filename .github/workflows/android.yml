@@ -18,6 +18,52 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v4
 
+      # ------------------------------------------------------------------
+      # Version is derived FROM THE TAG, never hand-edited:
+      #   tag vX.Y.Z  ->  versionName X.Y.Z
+      #                ->  versionCode X*10000 + Y*100 + Z
+      # A strictly increasing versionCode + the fixed signing key are what
+      # allow every release to be installed ON TOP of the previous version
+      # (Android keeps all app data — no uninstall required).
+      # ------------------------------------------------------------------
+      - name: Compute release version from tag (tags only)
+        if: startsWith(github.ref, 'refs/tags/')
+        id: ver
+        run: |
+          set -euo pipefail
+          TAG="$GITHUB_REF_NAME"
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Tag must look like vMAJOR.MINOR.PATCH (got '$TAG')."
+            exit 1
+          fi
+          V="${TAG#v}"
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$V"
+          CODE=$(( MAJOR * 10000 + MINOR * 100 + PATCH ))
+
+          # Guard: the new tag must be strictly newer than the latest release,
+          # so a mistagged release can never ship a stale/lower versionCode
+          # (Android would refuse the downgrade and confuse users).
+          LATEST=$(curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/latest" \
+            | python3 -c "import json,sys;print(json.load(sys.stdin).get('tag_name',''))" || true)
+          if [ -n "$LATEST" ]; then
+            LV="${LATEST#v}"
+            if [ "$LV" = "$V" ]; then
+              echo "::error::$TAG already exists as the latest release — bump the version."
+              exit 1
+            fi
+            HIGHER=$(printf '%s\n%s\n' "$LV" "$V" | sort -V | tail -1)
+            if [ "$HIGHER" != "$V" ]; then
+              echo "::error::$TAG is not newer than the latest release $LATEST — bump the version."
+              exit 1
+            fi
+          fi
+
+          echo "v=$V" >> "$GITHUB_OUTPUT"
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Version $TAG -> versionName $V, versionCode $CODE"
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
@@ -39,7 +85,12 @@ jobs:
         run: chmod +x gradlew
 
       - name: Build APKs (debug + signed release) & run unit tests
-        run: ./gradlew assembleDebug assembleRelease testDebugUnitTest lintDebug --stacktrace
+        run: |
+          ARGS=""
+          if [ -n "${{ steps.ver.outputs.code }}" ]; then
+            ARGS="-PnanoteVersionCode=${{ steps.ver.outputs.code }} -PnanoteVersionName=${{ steps.ver.outputs.v }}"
+          fi
+          ./gradlew assembleDebug assembleRelease testDebugUnitTest lintDebug --stacktrace $ARGS
 
       - name: Verify release APK is actually signed
         run: |
@@ -49,11 +100,11 @@ jobs:
           grep -q "CN=Nanote" signing-report.txt
 
       - name: Rename APKs for distribution
-        id: apk
         run: |
-          VERSION="${GITHUB_REF_NAME:-v1.0.0}"
-          cp app/build/outputs/apk/release/app-release.apk "Nanote-${VERSION}-release.apk"
-          cp app/build/outputs/apk/debug/app-debug.apk "Nanote-${VERSION}-debug.apk"
+          VERSION="${{ steps.ver.outputs.v }}"
+          if [ -z "$VERSION" ]; then VERSION="${GITHUB_REF_NAME//\//-}"; fi
+          cp app/build/outputs/apk/release/app-release.apk "Nanote-v${VERSION}-release.apk"
+          cp app/build/outputs/apk/debug/app-debug.apk "Nanote-v${VERSION}-debug.apk"
           ls -la Nanote-*.apk
 
       - name: Upload release APK (artifact)
@@ -70,28 +121,45 @@ jobs:
           path: Nanote-*-debug.apk
           if-no-files-found: error
 
-      - name: Publish GitHub Release with installable APKs (tags only)
+      # ------------------------------------------------------------------
+      # Only the SIGNED release APK is attached to the GitHub Release.
+      # Debug builds are signed with an ephemeral per-run keystore, so
+      # installing one would force an uninstall before any future update —
+      # they stay CI artifacts only and are never offered as downloads.
+      # ------------------------------------------------------------------
+      - name: Publish GitHub Release with installable APK (tags only)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            Nanote-*-release.apk
-            Nanote-*-debug.apk
+          files: Nanote-v${{ steps.ver.outputs.v }}-release.apk
           generate_release_notes: true
           make_latest: true
           body: |
-            # Nanote ${{ github.ref_name }}
+            # Nanote v${{ steps.ver.outputs.v }}
 
             **Nanote** — offline-first handwriting note-taking app for Android
             (stylus & finger), built with Kotlin + Jetpack Compose. No internet
             permission, no accounts, no tracking.
 
-            ## Install
-            1. Download `Nanote-${{ github.ref_name }}-release.apk` below.
-            2. On your Android 8.0+ device, open the file (tap the download
-               notification or use a file manager).
-            3. Allow *Install unknown apps* for your browser/file manager when
-               prompted, then confirm Install.
+            | | |
+            |---|---|
+            | Version name | ${{ steps.ver.outputs.v }} |
+            | versionCode | ${{ steps.ver.outputs.code }} — always increasing, so this APK installs **over** any older Nanote |
 
-            The `release` APK is R8-optimized and signed — ready to install.
-            The `debug` APK is the test build with debugging enabled.
+            ## Install · التثبيت والتحديث
+
+            **English** — Download **`Nanote-v${{ steps.ver.outputs.v }}-release.apk`** below, open it
+            (tap the download notification or use a file manager), then confirm
+            **Update**. Your notes are kept — there is **no need to uninstall**
+            the old version. If Android asks, allow *Install unknown apps* once
+            for your browser/file manager. Requires Android 8.0+.
+
+            **العربية** — نزّل ملف **`Nanote-v${{ steps.ver.outputs.v }}-release.apk`** من الأسفل وافتحه
+            (اضغط على إشعار التنزيل أو من مدير الملفات) ثم اضغط **تحديث**.
+            ستُحافَظ على جميع ملاحظاتك — **لا حاجة لحذف النسخة القديمة**.
+            إذا طلب النظام السماح، اسمح بـ *تثبيت التطبيقات غير المعروفة* مرة واحدة.
+            يتطلب Android 8.0 أو أحدث.
+
+            > ⚠️ Only use the `-release.apk` from this page for updates. The
+            > `-debug` builds in the CI artifacts are test builds signed with a
+            > temporary key — they will never update in place.

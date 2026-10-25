@@ -16,13 +16,54 @@ Auto-Backup is fully disabled.
 
 ---
 
+## Install & updates · التثبيت والتحديث
+
+**English** — grab the latest signed APK from
+[**Releases**](https://github.com/ahmedhaidr999-droid/Nanote/releases/latest):
+download **`Nanote-v…-release.apk`**, open it and confirm **Update** (or Install
+for the first one). Every release is signed with the same key and carries a
+strictly increasing `versionCode`, so **updates install right over the old
+version — nothing is uninstalled and all notes are kept**. Inside the app:
+*Settings → About → Check for updates* opens this page in one tap. The app
+itself has zero permissions and never touches the network; only the browser
+does the download. Requires Android 8.0+. Never install the `-debug` CI
+artifacts — those are signed with a temporary key and will never update in
+place.
+
+**العربية** — نزّل أحدث نسخة موقّعة من صفحة
+[**الإصدارات**](https://github.com/ahmedhaidr999-droid/Nanote/releases/latest):
+حمّل ملف **`Nanote-v…-release.apk`** وافتحه ثم اضغط **تحديث** (أو **تثبيت** لأول
+مرة). كل إصدار موقّع بنفس المفتاح وبرقم بناء متزايد، لذلك **يُثبَّت التحديث فوق
+النسخة القديمة مباشرة — دون حذفها — وتبقى كل ملاحظاتك كما هي**. داخل التطبيق:
+*الإعدادات ← حول ← التحقق من التحديثات* يفتح هذه الصفحة بضغطة واحدة. التطبيق
+نفسه بلا أي صلاحيات ولا يتصل بالإنترنت نهائيًا؛ التنزيل يتم في المتصفح فقط.
+يتطلب Android 8.0 أو أحدث. لا تثبّت نسخ `-debug` من ملفات CI المؤقتة — لن
+تُثبَّت التحديثات فوقها أبدًا.
+
+**Cutting a release (maintainer).** Versioning is fully automated — never
+hand-edit `versionCode`. Push your changes to `main`, then tag:
+
+```bash
+git tag v1.5.0
+git push origin v1.5.0
+```
+
+CI derives `versionName` from the tag and computes `versionCode` as
+`major*10000 + minor*100 + patch` (e.g. `v1.5.0` → `15000`), refuses any tag
+that is not strictly newer than the latest release, verifies the APK is signed
+with the `CN=Nanote` key, and publishes it to Releases. The signing keystore
+lives in the repository's **Actions secrets** — keep those intact, or updates
+will stop installing over existing installations.
+
+---
+
 ## Build & run
 
 Requirements: **JDK 17+**, **Android SDK** (platform 35, build-tools 35.0.0).
 
 ```bash
 ./gradlew assembleDebug          # debug APK
-./gradlew assembleRelease        # R8-minified release (unsigned)
+./gradlew assembleRelease        # release APK (signed by CI via env vars)
 ./gradlew testDebugUnitTest      # 83 unit tests (pure JVM + Robolectric)
 ./gradlew lintDebug              # lint
 adb install app/build/outputs/apk/debug/app-debug.apk

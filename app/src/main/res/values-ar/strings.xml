@@ -173,4 +173,11 @@
     <string name="crash_body">حدث انهيار عند التشغيل السابق. يُرجى مشاركة هذا التقرير مع المطوّر لإصلاح المشكلة، أو اضغط إغلاق للمتابعة.</string>
     <string name="crash_share">مشاركة التقرير</string>
     <string name="crash_close">إغلاق والمتابعة</string>
+
+    <!-- v1.4: التحديثات (الإصدار المثبّت + التحقق من التحديثات عبر المتصفح) -->
+    <string name="version_line">الإصدار %1$s (بناء %2$d)</string>
+    <string name="version_debug">نسخة تجريبية (Debug) — لن تُثبَّت التحديثات فوقها</string>
+    <string name="check_updates">التحقق من التحديثات</string>
+    <string name="update_hint">تُثبَّت التحديثات فوق النسخة الحالية مباشرة — دون حذف النسخة القديمة — وتبقى كل ملاحظاتك محفوظة.</string>
+    <string name="no_browser">لم يُعثر على متصفح</string>
 </resources>
