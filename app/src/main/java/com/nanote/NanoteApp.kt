@@ -4,6 +4,7 @@ import android.app.Application
 import com.nanote.core.CrashCatcher
 import com.nanote.data.repo.NotebookRepository
 import com.nanote.ink.render.PdfPageProvider
+import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -33,7 +34,7 @@ class NanoteApp : Application() {
         // v2.0: single pdfium engine context for the whole process.
         PdfPageProvider.appContext = this
         try {
-            com.tom.roush.pdfbox.android.PDFBoxResourceLoader.init(this)
+            PDFBoxResourceLoader.init(this)
         } catch (_: Throwable) {
         }
         // First line of business: catch any crash so the user can share the

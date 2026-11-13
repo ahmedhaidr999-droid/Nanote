@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.AutoStories
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Done
 import androidx.compose.material.icons.filled.FormatUnderlined
+import androidx.compose.material.icons.filled.FrontHand
 import androidx.compose.material.icons.filled.Highlight
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Redo
@@ -198,7 +199,7 @@ fun EditorScreen(
                 title = { Text(stringResource(R.string.pick_split_notebook)) },
                 text = {
                     if (others.isEmpty()) {
-                        Text(stringResource(R.string.empty_notebooks))
+                        Text(stringResource(R.string.library_empty_hint))
                     } else {
                         LazyColumn(Modifier.height(320.dp)) {
                             items(others, key = { it.id }) { nb ->
@@ -435,7 +436,7 @@ fun EditorPane(
             }
             IconButton(onClick = { vm.toggleStylusOnly() }) {
                 Icon(
-                    androidx.compose.material.icons.Icons.Filled.FrontHand,
+                    Icons.Filled.FrontHand,
                     contentDescription = stringResource(R.string.stylus_only),
                     tint = if (stylusOnly) MaterialTheme.colorScheme.primary
                     else MaterialTheme.colorScheme.onSurfaceVariant

@@ -65,7 +65,7 @@ class StripSlot(
     override val topPt: Float,
     val leftPt: Float,
     val widthPt: Float,
-    val heightPt: Float,
+    override val heightPt: Float,
     /** v2.0: infinite (auto-growing) page — pan clamp is relaxed (spec 3). */
     val infinite: Boolean,
     val host: InkCanvasView.Host?
