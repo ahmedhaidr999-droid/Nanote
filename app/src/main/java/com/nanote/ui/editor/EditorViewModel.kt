@@ -86,8 +86,8 @@ import kotlin.math.abs
  */
 @HiltViewModel(assistedFactory = EditorViewModel.Factory::class)
 class EditorViewModel @AssistedInject constructor(
-    @Assisted val notebookId: String,
-    @Assisted initialPageId: String,
+    @Assisted("notebookId") val notebookId: String,
+    @Assisted("pageId") initialPageId: String,
     private val repo: NotebookRepository,
     private val pageStore: PageStore,
     private val thumbs: ThumbRenderer,
@@ -103,7 +103,10 @@ class EditorViewModel @AssistedInject constructor(
 
     @AssistedFactory
     interface Factory {
-        fun create(notebookId: String, pageId: String): EditorViewModel
+        fun create(
+            @Assisted("notebookId") notebookId: String,
+            @Assisted("pageId") pageId: String
+        ): EditorViewModel
     }
 
     private companion object {
