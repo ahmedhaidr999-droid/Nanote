@@ -319,7 +319,7 @@ fun PageSettingsSheet(
                     Surface2(
                         selected = page != null && page.widthPt == PAGE_SIZES_PT.getValue(size).first &&
                             page.heightPt == PAGE_SIZES_PT.getValue(size).second,
-                        label = size,
+                        label = sizeLabel(size),
                         onClick = { onSizePick(size) }
                     )
                 }
@@ -357,6 +357,10 @@ fun PageSettingsSheet(
         }
     }
 }
+
+@Composable
+private fun sizeLabel(size: String): String =
+    if (size == "Infinite") stringResource(R.string.size_infinite) else size
 
 @Composable
 private fun Surface2(selected: Boolean, label: String, onClick: () -> Unit) {

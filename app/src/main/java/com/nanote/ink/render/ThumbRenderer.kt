@@ -9,6 +9,10 @@ import java.io.File
 /**
  * Renders a page snapshot to a small (300 px wide) WebP thumbnail, stored at
  * filesDir/thumbs/<pageId>.webp. Regenerated after each save (spec 5).
+ *
+ * v2.0: PDF-backed pages render their real PDF background ([pdfBitmap],
+ * produced by the pdfium engine) and the highlighter pass is included, so
+ * thumbnails now match what the user sees on the page.
  */
 class ThumbRenderer(private val thumbsDir: File) {
 
@@ -21,7 +25,8 @@ class ThumbRenderer(private val thumbsDir: File) {
         pageH: Float,
         paperId: String,
         bgArgb: Int,
-        snapshot: PageSnapshot
+        snapshot: PageSnapshot,
+        pdfBitmap: Bitmap? = null
     ): File? {
         if (pageW <= 0 || pageH <= 0) return null
         val width = 300
@@ -31,11 +36,20 @@ class ThumbRenderer(private val thumbsDir: File) {
         val scale = width / pageW
         canvas.scale(scale, scale)
 
-        PaperRenderer.drawPaper(canvas, pageW, pageH, com.nanote.ink.engine.paperById(paperId), bgArgb)
+        if (pdfBitmap != null) {
+            bitmap.eraseColor(0xFFFFFFFF.toInt())
+            val s = pageW / pdfBitmap.width.coerceAtLeast(1)
+            canvas.drawBitmap(
+                pdfBitmap, null,
+                android.graphics.RectF(0f, 0f, pageW, pdfBitmap.height * s),
+                null
+            )
+        } else {
+            PaperRenderer.drawPaper(canvas, pageW, pageH, com.nanote.ink.engine.paperById(paperId), bgArgb)
+        }
 
         for (s in snapshot.strokes) {
-            if (s.pen == PenType.HIGHLIGHTER) continue // keep thumbnails light
-            painter.configure(s.pen, s.argb)
+            painter.configure(s.pen, s.argb, s.alphaPercent)
             path.rewind()
             painter.appendStrokePath(s, path)
             canvas.drawPath(path, painter.paint)

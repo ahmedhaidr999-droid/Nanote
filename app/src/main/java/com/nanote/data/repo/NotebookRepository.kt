@@ -170,6 +170,7 @@ class NotebookRepository @Inject constructor(
         val id = UUID.randomUUID().toString()
         val now = System.currentTimeMillis()
         val (w, h) = PAGE_SIZES_PT.getValue(size)
+        val infinite = size in com.nanote.ink.engine.INFINITE_SIZES
         withContext(io) {
             notebookDao.upsert(
                 NotebookEntity(
@@ -188,6 +189,7 @@ class NotebookRepository @Inject constructor(
                     paper = paper,
                     bgArgb = 0xFFFFFFFF.toInt(),
                     pdfPageIndex = null,
+                    infinite = infinite,
                     updatedAt = now
                 )
             )
@@ -295,6 +297,7 @@ class NotebookRepository @Inject constructor(
             paper = last.paper,
             bgArgb = last.bgArgb,
             pdfPageIndex = null,
+            infinite = last.infinite,
             updatedAt = now
         )
         pageDao.upsert(entity)
@@ -336,8 +339,22 @@ class NotebookRepository @Inject constructor(
         pageDao.setPaper(pageId, paper, bgArgb, System.currentTimeMillis())
     }
 
-    suspend fun resizePage(pageId: String, widthPt: Float, heightPt: Float) = withContext(io) {
-        pageDao.setSize(pageId, widthPt, heightPt, System.currentTimeMillis())
+    /**
+     * v2.0: resizes a page; [infinite] marks the auto-growing canvas (spec 3).
+     * Also used to persist the grown size of an infinite page.
+     */
+    suspend fun resizePage(pageId: String, widthPt: Float, heightPt: Float, infinite: Boolean = false) =
+        withContext(io) {
+            pageDao.setSize(pageId, widthPt, heightPt, infinite, System.currentTimeMillis())
+        }
+
+    /** v2.0: raw entity access for the page-delete undo backup. */
+    suspend fun pageEntityById(pageId: String): PageEntity? =
+        withContext(io) { pageDao.byId(pageId) }
+
+    /** v2.0: re-inserts a page row exactly as captured (undo of delete). */
+    suspend fun insertPageEntity(entity: PageEntity) = withContext(io) {
+        pageDao.upsert(entity)
     }
 
     private suspend fun renumberPages(notebookId: String) {

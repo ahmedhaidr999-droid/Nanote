@@ -53,6 +53,8 @@ data class Page(
     val paper: String,
     val bgArgb: Int,
     val pdfPageIndex: Int?,
+    /** v2.0: infinite (auto-growing) canvas page (schema 2). */
+    val infinite: Boolean = false,
     val updatedAt: Long
 )
 
@@ -65,6 +67,20 @@ fun PageEntity.toDomain() = Page(
     paper = paper,
     bgArgb = bgArgb,
     pdfPageIndex = pdfPageIndex,
+    infinite = infinite,
+    updatedAt = updatedAt
+)
+
+fun Page.toEntity() = PageEntity(
+    id = id,
+    notebookId = notebookId,
+    position = position,
+    widthPt = widthPt,
+    heightPt = heightPt,
+    paper = paper,
+    bgArgb = bgArgb,
+    pdfPageIndex = pdfPageIndex,
+    infinite = infinite,
     updatedAt = updatedAt
 )
 

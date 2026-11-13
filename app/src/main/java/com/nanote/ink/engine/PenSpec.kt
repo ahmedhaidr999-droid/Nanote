@@ -27,7 +27,11 @@ val PEN_SPECS: Map<PenType, PenSpec> = mapOf(
     PenType.FOUNTAIN to PenSpec(0.35f, 1.60f, 0.30f, 1.00f, PenSpec.CAP_ROUND, false), // calligraphic
     PenType.PENCIL to PenSpec(0.60f, 1.20f, 0.00f, 0.75f, PenSpec.CAP_ROUND, false),
     PenType.MARKER to PenSpec(1.00f, 1.00f, 0.00f, 0.90f, PenSpec.CAP_ROUND, false),
-    PenType.HIGHLIGHTER to PenSpec(1.00f, 1.00f, 0.00f, 0.35f, PenSpec.CAP_SQUARE, true) // MULTIPLY, drawn under ink
+    // v2.0 (spec 5.2): the highlighter composites with PorterDuff SRC_OVER —
+    // text stays readable UNDER the tint and overlapping highlights stack
+    // naturally. The 0.35 alpha is the LEGACY default for v1 strokes whose
+    // per-stroke alphaPercent is 0; new strokes carry their own opacity.
+    PenType.HIGHLIGHTER to PenSpec(1.00f, 1.00f, 0.00f, 0.35f, PenSpec.CAP_SQUARE, false) // SRC_OVER, drawn under ink
 )
 
 fun specOf(pen: PenType): PenSpec = PEN_SPECS[pen] ?: PEN_SPECS.getValue(PenType.BALLPOINT)
@@ -47,13 +51,17 @@ val PEN_WIDTHS_PT = floatArrayOf(0.5f, 1f, 1.5f, 2.5f, 4f, 6f, 10f)
 val HIGHLIGHT_WIDTHS_PT = floatArrayOf(8f, 12f, 18f, 26f)
 val ERASER_RADII_PT = floatArrayOf(4f, 8f, 14f, 24f)
 
-/** Page sizes in PDF points. */
+/** Page sizes in PDF points. v2.0: "Infinite" = auto-growing canvas page. */
 val PAGE_SIZES_PT: Map<String, Pair<Float, Float>> = mapOf(
     "A4" to (595f to 842f),
     "A5" to (420f to 595f),
     "Letter" to (612f to 792f),
-    "Long" to (595f to 1684f)
+    "Long" to (595f to 1684f),
+    "Infinite" to (2400f to 3200f)
 )
+
+/** v2.0: page size ids that mark an auto-growing infinite canvas. */
+val INFINITE_SIZES = setOf("Infinite")
 
 class Paper(
     val id: String,

@@ -53,6 +53,11 @@ data class PageEntity(
     val bgArgb: Int,
     /** Non-null when this page annotates the given page of the imported PDF asset. */
     val pdfPageIndex: Int? = null,
+    /**
+     * v2.0 (schema 2): infinite (auto-growing) canvas page — pan clamp is
+     * relaxed and the page grows in 64 pt steps as ink approaches the edge.
+     */
+    val infinite: Boolean = false,
     val updatedAt: Long
 )
 

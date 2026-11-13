@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material.icons.filled.Highlight
+import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.WifiTethering
 import androidx.compose.material.icons.outlined.Edit
@@ -59,6 +60,8 @@ import com.nanote.ink.engine.EditorTool
 import com.nanote.ink.engine.PenType
 import com.nanote.ink.engine.ShapeKind
 
+import kotlin.math.roundToInt
+
 private val TOOLS = listOf(
     EditorTool.PEN,
     EditorTool.HIGHLIGHTER, // v1.1: separated highlighter tool
@@ -67,7 +70,8 @@ private val TOOLS = listOf(
     EditorTool.SHAPE,
     EditorTool.TEXT,
     EditorTool.IMAGE,
-    EditorTool.LASER
+    EditorTool.LASER,
+    EditorTool.SELECT // v2.0: PDF text selection (spec 5.3)
 )
 
 /**
@@ -91,6 +95,7 @@ fun ToolPalette(
     onWidth: (Float) -> Unit,
     onFingersDraw: () -> Unit,
     onShapeKind: (ShapeKind) -> Unit,
+    onHlOpacity: (Int) -> Unit = {},
     vertical: Boolean = false,
     popoverOnEnd: Boolean = false
 ) {
@@ -124,7 +129,7 @@ fun ToolPalette(
     if (vertical) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (popover && !popoverOnEnd) {
-                ToolPopover(tool, onPen, onColor, onWidth, onShapeKind, onDismiss = { popover = false })
+                ToolPopover(tool, onPen, onColor, onWidth, onShapeKind, onHlOpacity, onDismiss = { popover = false })
                 Spacer(Modifier.width(8.dp))
             }
             Surface(
@@ -179,13 +184,13 @@ fun ToolPalette(
             }
             if (popover && popoverOnEnd) {
                 Spacer(Modifier.width(8.dp))
-                ToolPopover(tool, onPen, onColor, onWidth, onShapeKind, onDismiss = { popover = false })
+                ToolPopover(tool, onPen, onColor, onWidth, onShapeKind, onHlOpacity, onDismiss = { popover = false })
             }
         }
     } else {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             if (popover) {
-                ToolPopover(tool, onPen, onColor, onWidth, onShapeKind, onDismiss = { popover = false })
+                ToolPopover(tool, onPen, onColor, onWidth, onShapeKind, onHlOpacity, onDismiss = { popover = false })
                 Spacer(Modifier.height(8.dp))
             }
 
@@ -285,6 +290,7 @@ private fun ToolChip(
         EditorTool.TEXT -> Icons.Filled.TextFields
         EditorTool.IMAGE -> Icons.Filled.Image
         EditorTool.LASER -> Icons.Filled.WifiTethering
+        EditorTool.SELECT -> Icons.Filled.SelectAll // v2.0 (spec 5.3)
     }
     val label = when (tool) {
         EditorTool.PEN -> stringResource(R.string.tool_pen)
@@ -295,6 +301,7 @@ private fun ToolChip(
         EditorTool.TEXT -> stringResource(R.string.tool_text)
         EditorTool.IMAGE -> stringResource(R.string.tool_image)
         EditorTool.LASER -> stringResource(R.string.tool_laser)
+        EditorTool.SELECT -> stringResource(R.string.tool_select)
     }
     var menu by remember { mutableStateOf(false) }
     Box {
@@ -343,6 +350,7 @@ fun ToolPopover(
     onColor: (Int) -> Unit,
     onWidth: (Float) -> Unit,
     onShapeKind: (ShapeKind) -> Unit,
+    onHlOpacity: (Int) -> Unit = {},
     onDismiss: () -> Unit
 ) {
     var hue by remember { mutableStateOf(0f) }
@@ -374,7 +382,19 @@ fun ToolPopover(
                     }
                 }
                 EditorTool.HIGHLIGHTER -> {
-                    // separated tool: no pen variants, highlight palette below
+                    // v2.0 (spec 5.2): opacity slider 0..100% — baked into NEW
+                    // strokes only; never retroactively changes old strokes.
+                    Text(
+                        stringResource(R.string.highlighter_opacity) + "  " +
+                            stringResource(R.string.opacity_percent_fmt, tool.hlOpacityPercent),
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                    Slider(
+                        value = tool.hlOpacityPercent.toFloat(),
+                        onValueChange = { onHlOpacity(it.roundToInt()) },
+                        valueRange = 0f..100f,
+                        modifier = Modifier.width(200.dp)
+                    )
                 }
                 else -> Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     // writing pens only — the highlighter lives in its own tool

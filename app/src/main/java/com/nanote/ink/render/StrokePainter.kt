@@ -1,12 +1,9 @@
 package com.nanote.ink.render
 
-import android.graphics.BlendMode
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
 import android.os.Build
-import android.graphics.PorterDuff
-import android.graphics.PorterDuffXfermode
 import com.nanote.ink.engine.PenSpec
 import com.nanote.ink.engine.PenType
 import com.nanote.ink.engine.Stroke
@@ -143,32 +140,36 @@ class StrokePainter {
         path.close()
     }
 
-    /** Configures the paint for a pen; returns the effective alpha. */
-    fun configure(pen: PenType, argb: Int): Float {
+    /**
+     * Configures the paint for a pen; returns the effective alpha.
+     *
+     * v2.0: [alphaPercent] (1..100) overrides the PenSpec default for
+     * highlighter strokes — alpha = round(percent × 255 / 100) exactly as
+     * the spec defines. 0 keeps the legacy PenSpec alpha (v1 strokes).
+     */
+    fun configure(pen: PenType, argb: Int, alphaPercent: Int = 0): Float {
         val spec = specOf(pen)
         paint.color = argb
-        paint.alpha = ((spec.alpha * 255).toInt()).coerceIn(0, 255)
+        val effective = if (pen == PenType.HIGHLIGHTER && alphaPercent in 1..100) {
+            alphaPercent / 100f
+        } else {
+            spec.alpha
+        }
+        paint.alpha = ((effective * 255).toInt()).coerceIn(0, 255)
+        // v2.0 (spec 5.2): SRC_OVER compositing — the highlighter tint never
+        // hides the text underneath and overlapping passes stack naturally.
+        if (Build.VERSION.SDK_INT >= 29) {
+            paint.blendMode = android.graphics.BlendMode.SRC_OVER
+        } else {
+            @Suppress("DEPRECATION")
+            paint.xfermode = null
+        }
         paint.strokeCap = when (spec.capOrdinal) {
             PenSpec.CAP_SQUARE -> Paint.Cap.SQUARE
             PenSpec.CAP_BUTT -> Paint.Cap.BUTT
             else -> Paint.Cap.ROUND
         }
-        if (spec.multiply) {
-            if (Build.VERSION.SDK_INT >= 29) {
-                paint.blendMode = BlendMode.MULTIPLY
-            } else {
-                @Suppress("DEPRECATION")
-                paint.xfermode = PorterDuffXfermode(PorterDuff.Mode.MULTIPLY)
-            }
-        } else {
-            if (Build.VERSION.SDK_INT >= 29) {
-                paint.blendMode = BlendMode.SRC_OVER
-            } else {
-                @Suppress("DEPRECATION")
-                paint.xfermode = null
-            }
-        }
-        return spec.alpha
+        return effective
     }
 
     fun isMultiply(pen: PenType): Boolean = specOf(pen).multiply

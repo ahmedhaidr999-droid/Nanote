@@ -12,15 +12,15 @@ package com.nanote.ink.engine
  * the render layer copies values out each frame. Double-tap animation is
  * driven by the view, which interpolates towards [fitToWidth] / 2x.
  *
- * v1.1: the zoom-out floor is ADAPTIVE. Imported PDFs come in any page size
- * (A4 … A0 posters, CAD sheets, panoramic slides), so a fixed 0.25 floor
- * made giant pages overflow the screen. [fitToWidth]/[fitToPage] now lower
- * the floor to the page's own fit scale, so every page — however large —
- * lands fully visible, and zooming out further stays possible.
+ * v2.0 (spec 6): the pinch range is 0.5×–10×. The zoom-OUT floor stays
+ * adaptive for oversized pages (A0 posters, CAD sheets): [fitToWidth]/
+ * [fitToPage] may lower the floor below 0.5 so every page — however large —
+ * lands fully visible; zooming out further stays possible. The ceiling is
+ * a hard 10×.
  */
 class ViewTransform(
-    initialMinScale: Float = 0.25f,
-    private val maxScale: Float = 8f
+    initialMinScale: Float = 0.5f,
+    private val maxScale: Float = 10f
 ) {
     val m = Mat3()
     private val inv = Mat3()

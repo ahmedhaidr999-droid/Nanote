@@ -9,6 +9,7 @@ import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Rect
+import android.graphics.RectF
 import android.util.AttributeSet
 import android.util.LruCache
 import android.util.SparseArray
@@ -29,6 +30,7 @@ import com.nanote.ink.engine.Mat3
 import com.nanote.ink.engine.PageDoc
 import com.nanote.ink.engine.PageStripLayout
 import com.nanote.ink.engine.PenSpec
+import com.nanote.ink.engine.PenType
 import com.nanote.ink.engine.PointerSpec
 import com.nanote.ink.engine.RemoveObjects
 import com.nanote.ink.engine.ReplaceObject
@@ -63,7 +65,9 @@ class StripSlot(
     override val topPt: Float,
     val leftPt: Float,
     val widthPt: Float,
-    override val heightPt: Float,
+    val heightPt: Float,
+    /** v2.0: infinite (auto-growing) page — pan clamp is relaxed (spec 3). */
+    val infinite: Boolean,
     val host: InkCanvasView.Host?
 ) : StripGeom
 
@@ -115,6 +119,24 @@ class InkCanvasView @JvmOverloads constructor(
 
         /** v1.2: PDF-backed pages open fit-to-PAGE (whole page visible). */
         val isPdfPage: Boolean get() = false
+
+        /** v2.0: PDF page index this page annotates (-1 when not a PDF page). */
+        val pdfPageIndex: Int get() = -1
+
+        /** v2.0: infinite (auto-growing) canvas page (spec 3). */
+        val isInfinitePage: Boolean get() = false
+
+        /** v2.0: the infinite page grew — persist the new dimensions. */
+        fun onPageGrew(newW: Float, newH: Float) {}
+
+        /**
+         * v2.0: cached PDF words of this page for text selection (null while
+         * the text layer is still loading) — spec 5.3.
+         */
+        fun pdfWords(): List<PdfWord>? = null
+
+        /** v2.0: request async word loading; [onReady] fires on the main thread. */
+        fun requestPdfWords(onReady: () -> Unit) {}
 
         /** v1.1: palm rejection — only the stylus WRITES (fingers still scroll). */
         fun stylusOnly(): Boolean
@@ -208,6 +230,7 @@ class InkCanvasView @JvmOverloads constructor(
     private var livePen = com.nanote.ink.engine.PenType.BALLPOINT
     private var liveArgb = 0
     private var liveBaseWidth = 2f
+    private var liveAlphaPercent = 0 // v2.0 highlighter opacity of this stroke
     private var liveActive = false
     private var liveFrozenCount = 0
     private var liveDirty = Bounds()
@@ -300,6 +323,65 @@ class InkCanvasView @JvmOverloads constructor(
     private var zoomAnimator: ValueAnimator? = null
     private var centerAnimator: ValueAnimator? = null
 
+    // ------------------------------------------------ v2.0 PDF text selection
+    /**
+     * Live text selection state (spec 5.3): two word-granular handles on real
+     * PDF text. Started by the SELECT tool, by a long-press, or by drag after
+     * the long-press; publishes menu anchor info through [onTextSelectionChanged].
+     */
+    private class TextSelection {
+        var host: Host? = null
+        var pdfPageIndex: Int = -1
+        var words: List<PdfWord> = emptyList()
+        var start = 0
+        var end = 0
+        var dragHandle = 0 // 0 none, 1 start, 2 end
+        var active = false
+        var pendingStartX = 0f
+        var pendingStartY = 0f
+    }
+
+    /** Snapshot published to the UI for the 5-action contextual menu. */
+    class TextSelectionInfo(
+        val text: String,
+        val pdfPageIndex: Int,
+        /** Selected word rects in PAGE points (spec: highlight/underline targets). */
+        val rects: List<RectF>,
+        /** Menu anchor in screen coordinates (already clamped above the selection). */
+        val anchorX: Float,
+        val anchorY: Float,
+        val host: Host
+    )
+
+    private var textSel: TextSelection? = null
+    private var selectingPointerId = -1
+
+    /** UI hook: selection created/changed/cleared (null) — fires on the main thread. */
+    var onTextSelectionChanged: ((TextSelectionInfo?) -> Unit)? = null
+
+    private val selRectPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val selHandlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val selHandleRing = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 2f
+        color = 0xFFFFFFFF.toInt()
+    }
+
+    // v2.0 long-press → text selection (spec 5.3 "long-press or drag")
+    private var longPressRunnable: Runnable? = null
+    private var longPressX = 0f
+    private var longPressY = 0f
+    private var longPressPointerId = -1
+
+    // v2.0 failed-tile retry chip (never a silent gray page)
+    private val chipBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val chipTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        textSize = 14f
+        color = 0xFFFFFFFF.toInt()
+    }
+    private val chipRectF = RectF()
+    private var errorOverlayText: String? = null
+
     private val tileRect = Rect()
     private val lassoCornerScratch = FloatArray(8)
 
@@ -311,7 +393,7 @@ class InkCanvasView @JvmOverloads constructor(
     private var stripScale = 1f
     private var stripOffX = 0f
     private var stripOffY = 0f
-    private var stripMinScale = 0.25f
+    private var stripMinScale = 0.5f
     private var activeIndex = 0
     private var fittedVw = 0f
     private var fittedVh = 0f
@@ -342,8 +424,18 @@ class InkCanvasView @JvmOverloads constructor(
         zoomAnimator?.cancel()
         centerAnimator?.cancel()
         scroller.forceFinished(true)
+        cancelLongPressSelect()
+        clearTextSelection()
         ioExecutor.shutdownNow()
     }
+
+    /** v2.0: localized text for the failed-tile retry chip (set by the UI). */
+    var tileErrorText: String?
+        get() = errorOverlayText
+        set(v) {
+            errorOverlayText = v
+            chipTextPaint.textSize = 14f * resources.displayMetrics.scaledDensity
+        }
 
     /**
      * Publishes the full page strip. [state] comes from the ViewModel;
@@ -397,9 +489,9 @@ class InkCanvasView @JvmOverloads constructor(
         }
     }
 
-    /** Zoom-out floor: the largest page in the notebook can still fit on screen. */
+    /** Zoom-out floor: 0.5× per spec, lowered when the largest page can't fit. */
     private fun recomputeFloor() {
-        var floor = 0.25f
+        var floor = 0.5f
         val vw = width.toFloat()
         val vh = height.toFloat()
         if (vw > 0f && vh > 0f) {
@@ -445,6 +537,22 @@ class InkCanvasView @JvmOverloads constructor(
 
     private fun clampStrip() {
         val a = stripSlots.getOrNull(activeIndex)
+        // v2.0 (spec 3): infinite pages pan freely — content extent plus a
+        // generous slack of two viewports in each direction, instead of the
+        // strict 25% visibility rule of bounded pages.
+        if (a != null && a.infinite) {
+            val slackY = height * 2f
+            val slackX = width * 2f
+            stripOffY = stripOffY.coerceIn(
+                height - stripTotalH * stripScale - slackY,
+                slackY
+            )
+            stripOffX = stripOffX.coerceIn(
+                width - (a.leftPt + a.widthPt) * stripScale - slackX,
+                slackX - a.leftPt * stripScale
+            )
+            return
+        }
         stripOffY = PageStripLayout.clampOffsetY(
             stripOffY, stripScale, stripTotalH, height.toFloat()
         )
@@ -599,7 +707,7 @@ class InkCanvasView @JvmOverloads constructor(
             // pixel-erase fragments live preview
             if (h === eraseHost && pixelFragments.isNotEmpty()) {
                 for (st in pixelFragments) {
-                    painter.configure(st.pen, st.argb)
+                    painter.configure(st.pen, st.argb, st.alphaPercent)
                     previewPath.rewind()
                     painter.appendStrokePath(st, previewPath)
                     canvas.drawPath(previewPath, painter.paint)
@@ -611,7 +719,7 @@ class InkCanvasView @JvmOverloads constructor(
                 val tool = h.tool()
                 val preview = buildShapeStroke(tool, 0, shapeX0, shapeY0, shapeX1, shapeY1, 0f)
                 if (preview != null) {
-                    painter.configure(preview.pen, preview.argb)
+                    painter.configure(preview.pen, preview.argb, preview.alphaPercent)
                     previewPath.rewind()
                     painter.appendStrokePath(preview, previewPath)
                     canvas.drawPath(previewPath, painter.paint)
@@ -649,7 +757,7 @@ class InkCanvasView @JvmOverloads constructor(
                     // transformed copies of selected strokes
                     for (st in ls.originals) {
                         val mapped = st.transformed(ls.preview, st.id)
-                        painter.configure(mapped.pen, mapped.argb)
+                        painter.configure(mapped.pen, mapped.argb, mapped.alphaPercent)
                         previewPath.rewind()
                         painter.appendStrokePath(mapped, previewPath)
                         canvas.drawPath(previewPath, painter.paint)
@@ -664,7 +772,7 @@ class InkCanvasView @JvmOverloads constructor(
 
             // live stroke
             if (h === liveHost && liveActive && liveCount > 0) {
-                painter.configure(livePen, liveArgb)
+                painter.configure(livePen, liveArgb, liveAlphaPercent)
                 canvas.drawPath(frozenPath, painter.paint)
                 canvas.drawPath(livePath, painter.paint)
                 if (liveCount == 1) {
@@ -707,6 +815,24 @@ class InkCanvasView @JvmOverloads constructor(
             canvas.restoreToCount(save)
         }
 
+        // v2.0 (spec 5.3): selected PDF text — tinted word rects, page space
+        val sel = textSel
+        if (sel != null && sel.active) {
+            val sh = sel.host
+            if (sh != null) {
+                setSlotMatrix(sh.transform)
+                val save = canvas.save()
+                canvas.setMatrix(androidMatrix)
+                selRectPaint.color = sh.tool().hlColorArgb
+                selRectPaint.alpha = 100
+                for (i in selWordRange(sel)) {
+                    val w = sel.words[i]
+                    canvas.drawRect(w.left, w.top, w.right, w.bottom, selRectPaint)
+                }
+                canvas.restoreToCount(save)
+            }
+        }
+
         // eraser ring cursor (screen space)
         if (erasing && !eraseY.isNaN()) {
             val t = eraseHost?.transform ?: anyHost.transform
@@ -714,6 +840,51 @@ class InkCanvasView @JvmOverloads constructor(
             val cx = t.m.mapX(eraseX, eraseY)
             val cy = t.m.mapY(eraseX, eraseY)
             canvas.drawCircle(cx, cy, eraseR * t.scale, erasePaint)
+        }
+
+        // v2.0: selection handles (screen space, constant size)
+        if (sel != null && sel.active) {
+            for (which in intArrayOf(1, 2)) {
+                if (selHandleScreen(sel, which, pagePoint)) {
+                    val r = 10f * resources.displayMetrics.density
+                    selHandlePaint.color = 0xFF1565C0.toInt()
+                    canvas.drawCircle(pagePoint[0], pagePoint[1], r, selHandlePaint)
+                    canvas.drawCircle(pagePoint[0], pagePoint[1], r, selHandleRing)
+                }
+            }
+        }
+
+        // v2.0: failed-tile retry chip — NEVER a silent gray page (spec 2.1.9)
+        val errText = errorOverlayText
+        if (errText != null) {
+            var anyFailed = false
+            for (s in slots) {
+                val hh = s.host ?: continue
+                if (!slotIntersectsViewport(s, vw, vh)) continue
+                if (hh.tileCache.hasFailures()) {
+                    anyFailed = true
+                    break
+                }
+            }
+            if (anyFailed) {
+                val tw = chipTextPaint.measureText(errText)
+                val padH = 18f * resources.displayMetrics.density
+                val padV = 10f * resources.displayMetrics.density
+                val cx = vw / 2f
+                val cy = vh - 72f * resources.displayMetrics.density
+                chipRectF.set(
+                    cx - tw / 2f - padH, cy - padV,
+                    cx + tw / 2f + padH, cy + padV
+                )
+                chipBgPaint.color = 0xCCB00020.toInt()
+                canvas.drawRoundRect(chipRectF, chipRectF.height() / 2f, chipRectF.height() / 2f, chipBgPaint)
+                val ty = cy - (chipTextPaint.descent() + chipTextPaint.ascent()) / 2f
+                canvas.drawText(errText, cx - tw / 2f, ty, chipTextPaint)
+            } else {
+                chipRectF.setEmpty()
+            }
+        } else {
+            chipRectF.setEmpty()
         }
     }
 
@@ -790,6 +961,15 @@ class InkCanvasView @JvmOverloads constructor(
         val isStylus = e.getToolType(0) == ToolTypes.STYLUS || e.getToolType(0) == ToolTypes.ERASER
         router.onStylusDownChanged(isStylus, e.eventTime)
 
+        // v2.0: tap on the failed-tile chip retries the render (spec 2.1.9)
+        if (chipRectF.contains(e.x, e.y)) {
+            for (s in stripSlots) {
+                s.host?.tileCache?.takeIf { it.hasFailures() }?.clearFailures()
+            }
+            invalidate()
+            return true
+        }
+
         // double-tap for zoom only when navigating
         val now = e.eventTime
         val close = hypot(e.x - lastTapX, e.y - lastTapY) < 48f
@@ -801,6 +981,19 @@ class InkCanvasView @JvmOverloads constructor(
         lastTapUpMs = 0
 
         routes.put(e.getPointerId(0), route)
+
+        // v2.0 (spec 5.3): an active text selection interacts first — drag
+        // its handles, or clear it when the tap lands elsewhere.
+        val sel = textSel
+        if (sel != null && sel.active && route == Route.DRAW) {
+            val handle = hitSelHandle(e.x, e.y)
+            if (handle != 0) {
+                selectingPointerId = e.getPointerId(0)
+                sel.dragHandle = handle
+                return true
+            }
+            clearTextSelection()
+        }
 
         // v1.2: content gestures target the page actually under the pointer
         var tgt: Host = h
@@ -837,6 +1030,7 @@ class InkCanvasView @JvmOverloads constructor(
 
         when (route) {
             Route.DRAW -> when (tool.tool) {
+                EditorTool.SELECT -> beginSelectOrPan(e, tgt) // v2.0 text selection tool
                 EditorTool.LASSO -> beginLasso(tgt, px, py)
                 EditorTool.SHAPE -> beginShape(tgt, px, py)
                 EditorTool.LASER -> beginLaser(tgt, px, py)
@@ -877,6 +1071,7 @@ class InkCanvasView @JvmOverloads constructor(
                 gestures.begin(e.x, e.y, e.x, e.y)
                 navPointerCount = 1
                 navTrack(e.x, e.y, e.eventTime)
+                scheduleLongPressSelect(e.getPointerId(0), e.x, e.y) // v2.0
             }
             Route.IGNORE -> Unit
         }
@@ -885,8 +1080,16 @@ class InkCanvasView @JvmOverloads constructor(
 
     private fun onPointerDown(e: MotionEvent, h: Host): Boolean {
         val i = e.actionIndex
+        cancelLongPressSelect() // second finger → pinch, not selection
         val route = router.route(spec(e, i))
         routes.put(e.getPointerId(i), route)
+
+        // v2.0: a second finger ends a text-selection drag (selection stays)
+        if (selectingPointerId >= 0 && e.pointerCount >= 2) {
+            selectingPointerId = -1
+            textSel?.dragHandle = 0
+            publishSelection()
+        }
 
         val ls = lasso
         if (ls != null && ls.finished && ls.mode == 1 && route == Route.DRAW) {
@@ -997,6 +1200,32 @@ class InkCanvasView @JvmOverloads constructor(
 
     private fun onMove(e: MotionEvent, h: Host): Boolean {
         val tool = h.tool()
+
+        // v2.0: cancel a pending long-press once the finger travels past slop
+        if (longPressRunnable != null && selectingPointerId < 0) {
+            for (p in 0 until e.pointerCount) {
+                if (e.getPointerId(p) == longPressPointerId) {
+                    if (hypot(e.getX(p) - longPressX, e.getY(p) - longPressY) > 12f) {
+                        cancelLongPressSelect()
+                    }
+                    break
+                }
+            }
+        }
+
+        // v2.0 (spec 5.3): active text-selection drag updates the range
+        if (selectingPointerId >= 0) {
+            val s = textSel
+            if (s != null) {
+                for (p in 0 until e.pointerCount) {
+                    if (e.getPointerId(p) == selectingPointerId) {
+                        updateTextSelection(e.getX(p), e.getY(p))
+                    }
+                }
+                return true
+            }
+            selectingPointerId = -1
+        }
 
         // selection gestures
         val ls = lasso
@@ -1179,6 +1408,16 @@ class InkCanvasView @JvmOverloads constructor(
         val isStylus = e.getToolType(e.actionIndex) == ToolTypes.STYLUS ||
             e.getToolType(e.actionIndex) == ToolTypes.ERASER
         router.onStylusDownChanged(false, e.eventTime)
+        cancelLongPressSelect()
+
+        // v2.0: end of a text-selection drag — selection stays for the menu
+        if (id == selectingPointerId) {
+            selectingPointerId = -1
+            textSel?.dragHandle = 0
+            publishSelection()
+            routes.clear()
+            return true
+        }
 
         val tool = h.tool()
         val ls = lasso
@@ -1277,6 +1516,9 @@ class InkCanvasView @JvmOverloads constructor(
     }
 
     private fun onCancel(e: MotionEvent, h: Host): Boolean {
+        cancelLongPressSelect()
+        selectingPointerId = -1
+        textSel?.dragHandle = 0
         cancelStroke(liveHost ?: h)
         erasing = false
         eraseHost = null
@@ -1403,6 +1645,9 @@ class InkCanvasView @JvmOverloads constructor(
         livePen = tool.pen
         liveArgb = tool.colorArgb
         liveBaseWidth = tool.widthPt
+        // v2.0 (spec 5.2): bake the CURRENT opacity into every new stroke —
+        // later slider changes never touch already-committed strokes.
+        liveAlphaPercent = if (tool.pen == PenType.HIGHLIGHTER) tool.hlOpacityPercent else 0
         liveCount = 0
         liveFrozenCount = 0
         liveActive = true
@@ -1515,6 +1760,7 @@ class InkCanvasView @JvmOverloads constructor(
                 val s = ideal
                 h.history.push(AddStrokes(listOf(s)), h.doc)
                 h.onContentCommitted()
+                maybeGrowInfinitePage(h, s.bounds)
                 livePath.rewind(); frozenPath.rewind(); liveFrozenCount = 0
                 invalidatePageRegion(s.bounds, h)
                 liveDirty.reset()
@@ -1524,9 +1770,10 @@ class InkCanvasView @JvmOverloads constructor(
         }
 
         val id = h.doc.nextStrokeId()
-        val s = Stroke(id, livePen, liveArgb, liveBaseWidth, pts)
+        val s = Stroke(id, livePen, liveArgb, liveBaseWidth, pts, liveAlphaPercent)
         h.history.push(AddStrokes(listOf(s)), h.doc)
         h.onContentCommitted()
+        maybeGrowInfinitePage(h, s.bounds)
 
         livePath.rewind()
         frozenPath.rewind()
@@ -1813,7 +2060,7 @@ class InkCanvasView @JvmOverloads constructor(
         val ls = lasso ?: return
         if (ls.originals.isEmpty()) return
         val recolored = ls.originals.map {
-            Stroke(it.id, it.pen, argb, it.baseWidth, it.pts)
+            Stroke(it.id, it.pen, argb, it.baseWidth, it.pts, it.alphaPercent)
         }
         hh.history.push(ReplaceStrokes(ArrayList(ls.originals), recolored), hh.doc)
         hh.onContentCommitted()
@@ -1842,6 +2089,7 @@ class InkCanvasView @JvmOverloads constructor(
         if (s != null) {
             h.history.push(AddStrokes(listOf(s)), h.doc)
             h.onContentCommitted()
+            maybeGrowInfinitePage(h, s.bounds)
             invalidatePageRegion(s.bounds, h)
         }
         h.onViewportOrContentMayHaveChanged()
@@ -1876,8 +2124,14 @@ class InkCanvasView @JvmOverloads constructor(
                 com.nanote.ink.engine.buildDiamondStroke(x0, y0, x1, y1, id, pen, argb, w, t0)
             com.nanote.ink.engine.ShapeKind.STAR ->
                 com.nanote.ink.engine.buildStarStroke(x0, y0, x1, y1, id, pen, argb, w, t0)
-        }
+        }?.bakeToolAlpha(tool)
     }
+
+    /** v2.0: shapes drawn with the highlighter pen carry the current opacity. */
+    private fun Stroke.bakeToolAlpha(tool: ToolSpec): Stroke =
+        if (pen == PenType.HIGHLIGHTER) {
+            Stroke(id, pen, argb, baseWidth, pts, tool.hlOpacityPercent)
+        } else this
 
     private fun snapToStroke(
         snap: Snap?,
@@ -1896,7 +2150,7 @@ class InkCanvasView @JvmOverloads constructor(
             )
             is Snap.Poly -> com.nanote.ink.engine.buildPolyStroke(snap.xy, id, pen, argb, w, t0)
             null -> null
-        }
+        }?.bakeToolAlpha(tool)
     }
 
     // ------------------------------------------------------------ objects
@@ -1982,7 +2236,8 @@ class InkCanvasView @JvmOverloads constructor(
         else vw / maxOf(slot.widthPt, 1f)
     }
 
-    /** Double-tap toggles between the page's fit scale and 2x, about the tap. */
+    /** Double-tap (spec 6): zoom 2× the CURRENT scale about the tap point;
+     *  when already at the 10× ceiling it toggles back to the page fit. */
     private fun animateZoomToggle(sx: Float, sy: Float) {
         val slot = stripSlots.getOrNull(activeIndex) ?: return
         scroller.forceFinished(true)
@@ -1991,7 +2246,8 @@ class InkCanvasView @JvmOverloads constructor(
 
         val fitScale = baseFitScaleOf(slot).coerceIn(stripMinScale, STRIP_MAX_SCALE)
         val s0 = stripScale
-        val s1 = if (s0 > fitScale * 1.6f) fitScale else (fitScale * 2f).coerceIn(stripMinScale, STRIP_MAX_SCALE)
+        val s1 = if (s0 >= STRIP_MAX_SCALE * 0.99f) fitScale
+        else (s0 * 2f).coerceIn(stripMinScale, STRIP_MAX_SCALE)
 
         val stripX = (sx - stripOffX) / s0
         val stripY = (sy - stripOffY) / s0
@@ -2014,6 +2270,220 @@ class InkCanvasView @JvmOverloads constructor(
         anim.start()
     }
 
+    // ------------------------------------------------- v2.0 text selection
+
+    /** SELECT tool press: begin a selection on PDF pages, pan elsewhere. */
+    private fun beginSelectOrPan(e: MotionEvent, tgt: Host) {
+        if (tgt.isPdfPage) {
+            selectingPointerId = e.getPointerId(0)
+            beginTextSelectionGesture(tgt, e.x, e.y)
+        } else {
+            routes.put(e.getPointerId(0), Route.NAVIGATE)
+            gestures.begin(e.x, e.y, e.x, e.y)
+            navPointerCount = 1
+            navTrack(e.x, e.y, e.eventTime)
+        }
+    }
+
+    private fun beginTextSelectionGesture(h: Host, sx: Float, sy: Float) {
+        if (!h.isPdfPage) return
+        val sel = TextSelection().apply {
+            host = h
+            pdfPageIndex = h.pdfPageIndex
+            dragHandle = 2 // dragging the END handle
+            pendingStartX = sx
+            pendingStartY = sy
+        }
+        textSel = sel
+        val cached = h.pdfWords()
+        if (cached != null) onSelWordsReady() else h.requestPdfWords { onSelWordsReady() }
+    }
+
+    /** Word layer arrived (or was cached): resolve the press into a word. */
+    private fun onSelWordsReady() {
+        val sel = textSel ?: return
+        val h = sel.host ?: return
+        val words = h.pdfWords()
+        if (words == null || words.isEmpty()) {
+            // Strict rule (spec 5.3): no text at the press → silent cancel.
+            clearTextSelection()
+            return
+        }
+        sel.words = words
+        if (!h.transform.toPage(sel.pendingStartX, sel.pendingStartY, pagePoint)) {
+            clearTextSelection()
+            return
+        }
+        val idx = wordIndexAt(words, pagePoint[0], pagePoint[1])
+        if (idx < 0) {
+            clearTextSelection()
+            return
+        }
+        sel.start = idx
+        sel.end = idx
+        sel.active = true
+        publishSelection()
+        invalidate()
+    }
+
+    private fun updateTextSelection(sx: Float, sy: Float) {
+        val sel = textSel ?: return
+        if (!sel.active) {
+            sel.pendingStartX = sx
+            sel.pendingStartY = sy
+            return
+        }
+        val h = sel.host ?: return
+        if (!h.transform.toPage(sx, sy, pagePoint)) return
+        val idx = wordIndexAt(sel.words, pagePoint[0], pagePoint[1])
+        if (idx < 0) return
+        if (sel.dragHandle == 1) sel.start = idx else sel.end = idx
+        publishSelection()
+        invalidate()
+    }
+
+    private fun publishSelection() {
+        val sel = textSel
+        val info = if (sel != null && sel.active) buildSelInfo(sel) else null
+        onTextSelectionChanged?.invoke(info)
+    }
+
+    private fun buildSelInfo(sel: TextSelection): TextSelectionInfo? {
+        if (sel.words.isEmpty()) return null
+        val i0 = minOf(sel.start, sel.end).coerceIn(0, sel.words.lastIndex)
+        val i1 = maxOf(sel.start, sel.end).coerceIn(0, sel.words.lastIndex)
+        if (i1 < i0) return null
+        val words = sel.words.subList(i0, i1 + 1)
+        if (words.isEmpty()) return null
+        var l = Float.MAX_VALUE
+        var t = Float.MAX_VALUE
+        var r = -Float.MAX_VALUE
+        var b = -Float.MAX_VALUE
+        words.forEach { w ->
+            if (w.left < l) l = w.left
+            if (w.top < t) t = w.top
+            if (w.right > r) r = w.right
+            if (w.bottom > b) b = w.bottom
+        }
+        val h = sel.host ?: return null
+        val corners = floatArrayOf(l, t, r, b)
+        h.transform.m.mapPoints(corners, 0, 2)
+        // Anchor above the selection; flip below when there is no room.
+        val anchorY = if (corners[1] > 96f) corners[1] - 12f else corners[3] + 12f
+        return TextSelectionInfo(
+            text = words.joinToString(" ") { it.text },
+            pdfPageIndex = sel.pdfPageIndex,
+            rects = words.map { RectF(it.left, it.top, it.right, it.bottom) },
+            anchorX = (corners[0] + corners[2]) / 2f,
+            anchorY = anchorY,
+            host = h
+        )
+    }
+
+    private fun selWordRange(sel: TextSelection): IntRange {
+        if (sel.words.isEmpty()) return 0 until 0
+        val i0 = minOf(sel.start, sel.end).coerceIn(0, sel.words.lastIndex)
+        val i1 = maxOf(sel.start, sel.end).coerceIn(0, sel.words.lastIndex)
+        return i0..i1
+    }
+
+    /** Screen position of handle 1 (start, left edge) or 2 (end, right edge). */
+    private fun selHandleScreen(sel: TextSelection, which: Int, out: FloatArray): Boolean {
+        val h = sel.host ?: return false
+        if (sel.words.isEmpty()) return false
+        val i = (if (which == 1) minOf(sel.start, sel.end) else maxOf(sel.start, sel.end))
+            .coerceIn(0, sel.words.lastIndex)
+        val w = sel.words[i]
+        out[0] = if (which == 1) w.left else w.right
+        out[1] = (w.top + w.bottom) / 2f
+        h.transform.m.mapPoints(out, 0, 1)
+        return true
+    }
+
+    /** 0 = no handle; 1/2 = start/end handle under the screen point. */
+    private fun hitSelHandle(sx: Float, sy: Float): Int {
+        val sel = textSel ?: return 0
+        if (!sel.active) return 0
+        val r = 24f * resources.displayMetrics.density
+        for (which in intArrayOf(1, 2)) {
+            if (selHandleScreen(sel, which, pagePoint)) {
+                if (hypot(sx - pagePoint[0], sy - pagePoint[1]) <= r) return which
+            }
+        }
+        return 0
+    }
+
+    private fun wordIndexAt(words: List<PdfWord>, px: Float, py: Float): Int {
+        var best = -1
+        var bestD = Float.MAX_VALUE
+        for (i in words.indices) {
+            val w = words[i]
+            if (px >= w.left - 3f && px <= w.right + 3f && py >= w.top - 3f && py <= w.bottom + 3f) return i
+            val cx = (w.left + w.right) / 2f
+            val cy = (w.top + w.bottom) / 2f
+            val d = hypot(px - cx, py - cy)
+            if (d < bestD) {
+                bestD = d
+                best = i
+            }
+        }
+        return if (bestD <= 28f) best else -1
+    }
+
+    /** Clears the text selection and hides the contextual menu. */
+    fun clearTextSelection() {
+        if (textSel != null) {
+            textSel = null
+            selectingPointerId = -1
+            onTextSelectionChanged?.invoke(null)
+            invalidate()
+        }
+    }
+
+    /** The current selection info (for the 5-action menu), or null. */
+    fun textSelectionInfo(): TextSelectionInfo? {
+        val sel = textSel ?: return null
+        return if (sel.active) buildSelInfo(sel) else null
+    }
+
+    // --------------------------------------------- v2.0 long-press selection
+
+    private fun scheduleLongPressSelect(pointerId: Int, x: Float, y: Float) {
+        cancelLongPressSelect()
+        longPressX = x
+        longPressY = y
+        longPressPointerId = pointerId
+        val r = Runnable {
+            longPressRunnable = null
+            if (selectingPointerId >= 0 || navPointerCount != 1) return@Runnable
+            val slot = slotAt(longPressX, longPressY) ?: return@Runnable
+            val h = slot.host ?: return@Runnable
+            if (!h.isPdfPage) return@Runnable
+            // Steal the navigating finger into a selection drag.
+            selectingPointerId = longPressPointerId
+            gestures.end()
+            beginTextSelectionGesture(h, longPressX, longPressY)
+        }
+        longPressRunnable = r
+        postDelayed(r, 450)
+    }
+
+    private fun cancelLongPressSelect() {
+        longPressRunnable?.let { removeCallbacks(it) }
+        longPressRunnable = null
+        longPressPointerId = -1
+    }
+
+    // ------------------------------------------------- v2.0 infinite canvas
+
+    /** Grows the page when ink landed beyond its bounds; notifies the host. */
+    private fun maybeGrowInfinitePage(h: Host, b: Bounds) {
+        if (!h.doc.infinite) return
+        if (h.doc.growTo(b)) {
+            h.onPageGrew(h.doc.widthPt, h.doc.heightPt)
+        }
+    }
+
     companion object {
         private const val INIT_LIVE_POINTS = 512
         private const val FROZEN_THRESHOLD = 400
@@ -2021,7 +2491,9 @@ class InkCanvasView @JvmOverloads constructor(
         private const val LIVE_TAIL = 24
         private const val LASER_FADE_MS = 550f
         private const val NAV_TRACK_N = 16
-        private const val STRIP_MAX_SCALE = 8f
+
+        /** v2.0 (spec 6): pinch range 0.5×–10×. */
+        private const val STRIP_MAX_SCALE = 10f
 
         /** Mirrors InputRouter's default palm contact-patch threshold. */
         private const val PALM_MAJOR_PX = 30f

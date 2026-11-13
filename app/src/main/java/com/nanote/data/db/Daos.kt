@@ -192,8 +192,8 @@ interface PageDao {
     @Query("UPDATE pages SET paper = :paper, bgArgb = :bg, updatedAt = :now WHERE id = :id")
     suspend fun setPaper(id: String, paper: String, bg: Int, now: Long)
 
-    @Query("UPDATE pages SET widthPt = :w, heightPt = :h, updatedAt = :now WHERE id = :id")
-    suspend fun setSize(id: String, w: Float, h: Float, now: Long)
+    @Query("UPDATE pages SET widthPt = :w, heightPt = :h, infinite = :infinite, updatedAt = :now WHERE id = :id")
+    suspend fun setSize(id: String, w: Float, h: Float, infinite: Boolean, now: Long)
 
     @Query("SELECT * FROM pages")
     suspend fun all(): List<PageEntity>

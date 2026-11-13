@@ -119,7 +119,7 @@ fun pixelErasePath(
                 pts[j * STRIDE + 2] = s.p(minOf((srcIdx * s.count / rsN), s.count - 1))
                 pts[j * STRIDE + 3] = s.t(minOf((srcIdx * s.count / rsN), s.count - 1))
             }
-            out.add(Stroke(idAllocator(), s.pen, s.argb, s.baseWidth, pts))
+            out.add(Stroke(idAllocator(), s.pen, s.argb, s.baseWidth, pts, s.alphaPercent))
         }
         runStart = -1
     }
@@ -136,6 +136,6 @@ fun pixelErasePath(
 }
 
 private fun dotStroke(proto: Stroke, x: Float, y: Float, id: Int): Stroke =
-    Stroke(id, proto.pen, proto.argb, proto.baseWidth, floatArrayOf(x, y, 0.5f, 0f))
+    Stroke(id, proto.pen, proto.argb, proto.baseWidth, floatArrayOf(x, y, 0.5f, 0f), proto.alphaPercent)
 
 

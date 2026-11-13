@@ -19,7 +19,14 @@ class Stroke(
     val pen: PenType,
     val argb: Int,
     val baseWidth: Float,
-    val pts: FloatArray
+    val pts: FloatArray,
+    /**
+     * v2.0: per-stroke highlighter opacity in percent (1..100). 0 = legacy
+     * stroke from v1 files (or non-highlighter pens) → rendered with the
+     * PenSpec default. Serialized in InkFormat v2 so changing the tool slider
+     * NEVER retroactively changes already-committed strokes (spec 5.2).
+     */
+    val alphaPercent: Int = 0
 ) {
     val count: Int get() = pts.size / STRIDE
 
@@ -55,18 +62,20 @@ class Stroke(
             out[i * STRIDE] = xy[2 * i]
             out[i * STRIDE + 1] = xy[2 * i + 1]
         }
-        return Stroke(newId, pen, argb, baseWidth * k, out)
+        return Stroke(newId, pen, argb, baseWidth * k, out, alphaPercent)
     }
 
     override fun equals(other: Any?): Boolean =
         other is Stroke && other.id == id && other.pen == pen && other.argb == argb &&
-            other.baseWidth == baseWidth && other.pts.contentEquals(pts)
+            other.baseWidth == baseWidth && other.alphaPercent == alphaPercent &&
+            other.pts.contentEquals(pts)
 
     override fun hashCode(): Int {
         var result = id
         result = 31 * result + pen.hashCode()
         result = 31 * result + argb
         result = 31 * result + baseWidth.toBits()
+        result = 31 * result + alphaPercent
         result = 31 * result + pts.contentHashCode()
         return result
     }

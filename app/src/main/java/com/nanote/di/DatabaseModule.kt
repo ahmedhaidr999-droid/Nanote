@@ -23,7 +23,9 @@ object DatabaseModule {
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): AppDatabase =
         Room.databaseBuilder(context, AppDatabase::class.java, "nanote.db")
-            // Schema v1. Any future schema change MUST ship with a Migration.
+            // Schema v1→v2 (v2.0: pages.infinite). Every schema change
+            // MUST ship with a Migration — never destructive on user data.
+            .addMigrations(*AppDatabase.ALL_MIGRATIONS)
             .build()
 
     @Provides

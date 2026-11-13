@@ -10,7 +10,7 @@ package com.nanote.ink.engine
  * ([colorArgb] / [widthPt] are computed per active tool), so switching tools
  * never leaks the pen's color into the highlighter or vice versa.
  */
-enum class EditorTool { PEN, HIGHLIGHTER, ERASER, LASSO, SHAPE, TEXT, IMAGE, LASER }
+enum class EditorTool { PEN, HIGHLIGHTER, ERASER, LASSO, SHAPE, TEXT, IMAGE, LASER, SELECT }
 
 enum class ShapeKind { LINE, ARROW, RECT, ELLIPSE, TRIANGLE, DIAMOND, STAR }
 
@@ -24,6 +24,12 @@ data class ToolSpec(
     /** Separate color/width memory of the highlighter tool. */
     val hlColorArgb: Int = 0xFFFFEB3B.toInt(),
     val hlWidthPt: Float = 12f,
+    /**
+     * v2.0 (spec 5.2): highlighter opacity 0..100%. Baked into each NEW
+     * stroke at commit time (alphaPercent), so later slider changes never
+     * touch existing strokes. Default 40% per spec.
+     */
+    val hlOpacityPercent: Int = 40,
     /** Last non-highlighter pen type used by the PEN tool. */
     val lastWritingPen: PenType = PenType.BALLPOINT,
     val eraserWholeStroke: Boolean = true,
@@ -74,5 +80,9 @@ data class ToolSpec(
         /** Width change routed to the memory of the ACTIVE tool. */
         fun withWidth(s: ToolSpec, w: Float): ToolSpec =
             if (s.isHighlighter) s.copy(hlWidthPt = w) else s.copy(penWidthPt = w)
+
+        /** v2.0: highlighter opacity slider (0..100), new strokes only. */
+        fun withHlOpacity(s: ToolSpec, percent: Int): ToolSpec =
+            s.copy(hlOpacityPercent = percent.coerceIn(0, 100))
     }
 }

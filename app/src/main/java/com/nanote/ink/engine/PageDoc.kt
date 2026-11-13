@@ -7,10 +7,14 @@ package com.nanote.ink.engine
  *
  * [PageDoc] plus [History] plus the tile cache form the editing session state
  * of one page; history lives only for the editing session.
+ *
+ * v2.0: pages marked [infinite] auto-GROW (right/down, in 64 pt steps) when
+ * ink lands beyond the current extent — the infinite canvas (spec 3).
  */
 class PageDoc(
-    val widthPt: Float,
-    val heightPt: Float,
+    var widthPt: Float,
+    var heightPt: Float,
+    val infinite: Boolean = false,
     initialStrokes: List<Stroke> = emptyList()
 ) {
     private val strokes = LinkedHashMap<Int, Stroke>()
@@ -113,6 +117,27 @@ class PageDoc(
         revision += 1
         changeLog.addLast(Change(revision, dirty))
         while (changeLog.size > MAX_CHANGES) changeLog.removeFirst()
+    }
+
+    /**
+     * v2.0 (infinite canvas): grows the page so [b] fits, in 64 pt steps and
+     * only toward positive x/y (the natural writing direction). Returns true
+     * when the page grew — the caller then persists the new size and rebuilds
+     * the tile cache at the new dimensions.
+     */
+    fun growTo(b: Bounds): Boolean {
+        if (!infinite) return false
+        var w = widthPt
+        var h = heightPt
+        if (b.right > w) w = ((b.right / 64f).toInt() + 1) * 64f
+        if (b.bottom > h) h = ((b.bottom / 64f).toInt() + 1) * 64f
+        if (w == widthPt && h == heightPt) return false
+        widthPt = w
+        heightPt = h
+        val full = Bounds()
+        full.set(0f, 0f, w, h)
+        bump(full)
+        return true
     }
 
     /**

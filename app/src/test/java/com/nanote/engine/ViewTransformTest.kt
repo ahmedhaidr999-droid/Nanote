@@ -42,9 +42,9 @@ class ViewTransformTest {
     fun `scale clamped to bounds`() {
         val vt = ViewTransform()
         vt.zoom(1000f, 0f, 0f)
-        assertThat(vt.scale).isAtMost(8.001f)
+        assertThat(vt.scale).isAtMost(10.001f) // v2.0 (spec 6): pinch ceiling 10x
         vt.zoom(0.0001f, 0f, 0f)
-        assertThat(vt.scale).isAtLeast(0.2499f)
+        assertThat(vt.scale).isAtLeast(0.4999f) // v2.0 (spec 6): pinch floor 0.5x
     }
 
     @Test

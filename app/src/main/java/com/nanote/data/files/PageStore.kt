@@ -16,7 +16,11 @@ private data class PageSidecar(
 
 data class LoadedPage(
     val strokes: List<Stroke>,
-    val objects: List<PageObject>
+    val objects: List<PageObject>,
+    /** v2.0: strokes that were too damaged to load and got skipped (partial recovery). */
+    val droppedStrokes: Int = 0,
+    /** v2.0: true when the ink blob was truncated (crash mid-write). */
+    val truncated: Boolean = false
 )
 
 /**
@@ -61,23 +65,36 @@ class PageStore(private val notebooksRoot: File) {
     /**
      * Loads strokes and objects. A corrupt main file falls back to its .bak
      * (spec: "on load, fall back to the .bak if the main file is corrupt").
+     * v2.0: decoding is per-stroke fault-tolerant — damaged strokes are
+     * salvaged around and counted in [LoadedPage.droppedStrokes] instead of
+     * failing the whole page (partial recovery, spec 8.2).
      */
     @Throws(IOException::class)
     fun load(notebookId: String, pageId: String): LoadedPage {
         val ink = pageInk(notebookId, pageId)
-        val strokes = loadStrokes(ink) ?: loadStrokes(File(ink.parentFile, ink.name + ".bak")) ?: emptyList()
+        val main = loadStrokes(ink)
+        val strokes = main
+            ?: loadStrokes(File(ink.parentFile, ink.name + ".bak"))
+            ?: StrokeLoad(emptyList(), 0, false)
 
         val sidecar = pageJson(notebookId, pageId)
         val objects = loadObjects(sidecar)
             ?: loadObjects(File(sidecar.parentFile, sidecar.name + ".bak"))
             ?: emptyList()
-        return LoadedPage(strokes, objects)
+        return LoadedPage(strokes.strokes, objects, strokes.dropped, strokes.truncated)
     }
 
-    private fun loadStrokes(f: File): List<Stroke>? {
+    private data class StrokeLoad(
+        val strokes: List<Stroke>,
+        val dropped: Int,
+        val truncated: Boolean
+    )
+
+    private fun loadStrokes(f: File): StrokeLoad? {
         if (!f.exists() || f.length() == 0L) return null
         return try {
-            InkFormat.decode(f.readBytes())
+            val r = InkFormat.decodeRecovering(f.readBytes())
+            StrokeLoad(r.strokes, r.dropped, r.truncated)
         } catch (_: Exception) {
             null // corrupt -> caller falls back to .bak
         }

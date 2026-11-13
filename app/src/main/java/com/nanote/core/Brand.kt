@@ -8,7 +8,7 @@ package com.nanote.core
 object Brand {
     const val APP_NAME = "Nanote"
     const val APPLICATION_ID = "com.nanote"
-    const val VERSION = "1.4"
+    const val VERSION = "2.0"
 
     /**
      * Public download page for updates. The app has zero permissions and

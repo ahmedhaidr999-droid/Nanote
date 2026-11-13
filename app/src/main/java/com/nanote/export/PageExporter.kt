@@ -32,9 +32,10 @@ class PageExporter(
 
     /** Renders one page into [c], assuming [c] is already scaled to page points. */
     fun drawContent(c: Canvas, page: Page, snapshot: PageSnapshot, forPdf: Boolean) {
-        // Background: PDF bitmap or paper template
+        // Background: PDF bitmap (v2.0: 3× raster, scaled down = crisp text)
+        // or the paper template.
         if (page.pdfPageIndex != null && pdfBitmap != null) {
-            val widthPx = (page.widthPt * 2f).toInt().coerceAtLeast(64) // 2x, scaled down
+            val widthPx = (page.widthPt * 3f).toInt().coerceAtLeast(64)
             val bmp = pdfBitmap(page.pdfPageIndex!!, widthPx)
             if (bmp != null) {
                 val scale = page.widthPt / bmp.width
@@ -48,30 +49,22 @@ class PageExporter(
             com.nanote.ink.render.PaperRenderer.drawPaper(c, page.widthPt, page.heightPt, paperById(page.paper), page.bgArgb)
         }
 
-        // Highlighter (multiply) then ink, then objects (same order as tiles).
+        // Highlighter (SRC_OVER since v2.0) under the ink, then objects —
+        // the exact same order and paint configuration as the screen tiles,
+        // so exports match what the user sees.
         for (s in snapshot.strokes) {
             if (s.pen != PenType.HIGHLIGHTER) continue
-            drawStroke(c, s, forPdf)
+            drawStroke(c, s)
         }
         for (s in snapshot.strokes) {
             if (s.pen == PenType.HIGHLIGHTER) continue
-            drawStroke(c, s, forPdf)
+            drawStroke(c, s)
         }
         objectPainter.drawObjects(c, snapshot.objects)
     }
 
-    private fun drawStroke(c: Canvas, s: Stroke, forPdf: Boolean) {
-        painter.configure(s.pen, s.argb)
-        if (forPdf && painter.isMultiply(s.pen)) {
-            // Some PDF canvases dislike MULTIPLY; fall back to alpha compositing
-            // by temporarily dropping the blend mode (spec 7 fallback).
-            if (android.os.Build.VERSION.SDK_INT >= 29) {
-                painter.paint.blendMode = android.graphics.BlendMode.SRC_OVER
-            } else {
-                @Suppress("DEPRECATION")
-                painter.paint.xfermode = null
-            }
-        }
+    private fun drawStroke(c: Canvas, s: Stroke) {
+        painter.configure(s.pen, s.argb, s.alphaPercent)
         path.rewind()
         painter.appendStrokePath(s, path)
         c.drawPath(path, painter.paint)

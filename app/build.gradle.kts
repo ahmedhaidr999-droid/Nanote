@@ -31,8 +31,8 @@ android {
         // updates replace the old version in place (notes preserved, no
         // uninstall). The fallbacks below are only for local/untagged builds.
         // ------------------------------------------------------------------
-        versionCode = (findProperty("nanoteVersionCode") as String?)?.toInt() ?: 7
-        versionName = (findProperty("nanoteVersionName") as String?) ?: "1.4.0"
+        versionCode = (findProperty("nanoteVersionCode") as String?)?.toInt() ?: 20000
+        versionName = (findProperty("nanoteVersionName") as String?) ?: "2.0.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
     }
@@ -152,6 +152,11 @@ dependencies {
     implementation(libs.datastore.preferences)
     implementation(libs.androidx.biometric)
     implementation(libs.kotlinx.coroutines.android)
+
+    // v2.0 PDF engine (pdfium + text extraction). Native-only libraries;
+    // neither merges any manifest permission, keeping the app offline-only.
+    implementation(libs.pdfium.android)
+    implementation(libs.pdfbox.android)
 
     debugImplementation(libs.compose.ui.tooling)
     debugImplementation(libs.compose.ui.test.manifest)

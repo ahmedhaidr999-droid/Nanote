@@ -180,4 +180,24 @@
     <string name="check_updates">التحقق من التحديثات</string>
     <string name="update_hint">تُثبَّت التحديثات فوق النسخة الحالية مباشرة — دون حذف النسخة القديمة — وتبقى كل ملاحظاتك محفوظة.</string>
     <string name="no_browser">لم يُعثر على متصفح</string>
+
+    <!-- v2.0: الشفافية، العرض المنقسم، إجراءات تحديد النص، التشخيص -->
+    <string name="opacity">الشفافية</string>
+    <string name="highlighter_opacity">شفافية قلم التظليل</string>
+    <string name="opacity_percent_fmt">%1$d٪</string>
+    <string name="default_hl_opacity">شفافية التظليل الافتراضية</string>
+    <string name="split_view">عرض منقسم</string>
+    <string name="exit_split_view">إنهاء العرض المنقسم</string>
+    <string name="pick_split_notebook">فتح مستند بجانبه</string>
+    <string name="action_translate">ترجمة</string>
+    <string name="action_web_search">بحث في الويب</string>
+    <string name="action_highlight">تظليل</string>
+    <string name="action_underline">تسطير</string>
+    <string name="copied_to_clipboard">تم النسخ إلى الحافظة</string>
+    <string name="tile_render_failed">تعذّر العرض — انقر لإعادة المحاولة</string>
+    <string name="recovered_partial_fmt">تم استرجاع المستند جزئيًا: تم تخطي %1$d عنصرًا تالفًا</string>
+    <string name="diagnostics_title">سجل التشخيص</string>
+    <string name="diagnostics_empty">لا توجد سجلات بعد</string>
+    <string name="size_infinite">لانهائي</string>
+    <string name="tool_select">تحديد النص</string>
 </resources>

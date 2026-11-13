@@ -50,6 +50,7 @@ class SettingsStore @Inject constructor(
         val AUTOSAVE_MS = longPreferencesKey("autosave_ms")
         val APP_LOCK = booleanPreferencesKey("app_lock")
         val TAG_FILTER = stringPreferencesKey("tag_filter")
+        val DEFAULT_HL_OPACITY = intPreferencesKey("default_hl_opacity") // v2.0: 0..100
     }
 
     private val prefs get() = context.settingsStore.data
@@ -173,10 +174,18 @@ class SettingsStore @Inject constructor(
         context.settingsStore.edit { it[Keys.STYLUS_AUTO_CFG] = true }
     }
 
-    val autosaveMs: Flow<Long> = prefs.map { it[Keys.AUTOSAVE_MS] ?: 1500L }
+    /** v2.0 (spec 8.1): default 2 s debounce; the editor reads this live. */
+    val autosaveMs: Flow<Long> = prefs.map { it[Keys.AUTOSAVE_MS] ?: 2000L }
 
     suspend fun setAutosaveMs(ms: Long) {
         context.settingsStore.edit { it[Keys.AUTOSAVE_MS] = ms }
+    }
+
+    /** v2.0 (spec 10): default highlighter opacity for new notebooks (0..100). */
+    val defaultHlOpacity: Flow<Int> = prefs.map { it[Keys.DEFAULT_HL_OPACITY] ?: 40 }
+
+    suspend fun setDefaultHlOpacity(percent: Int) {
+        context.settingsStore.edit { it[Keys.DEFAULT_HL_OPACITY] = percent.coerceIn(0, 100) }
     }
 
     val appLock: Flow<Boolean> = prefs.map { it[Keys.APP_LOCK] ?: false }

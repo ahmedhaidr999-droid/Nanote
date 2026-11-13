@@ -177,4 +177,24 @@
     <string name="check_updates">Check for updates</string>
     <string name="update_hint">Updates install right over the current version — no need to uninstall, and all your notes are kept.</string>
     <string name="no_browser">No browser found</string>
+
+    <!-- v2.0: opacity, split view, text-selection actions, diagnostics -->
+    <string name="opacity">Opacity</string>
+    <string name="highlighter_opacity">Highlighter opacity</string>
+    <string name="opacity_percent_fmt">%1$d%%</string>
+    <string name="default_hl_opacity">Default highlighter opacity</string>
+    <string name="split_view">Split view</string>
+    <string name="exit_split_view">Exit split view</string>
+    <string name="pick_split_notebook">Open alongside</string>
+    <string name="action_translate">Translate</string>
+    <string name="action_web_search">Search web</string>
+    <string name="action_highlight">Highlight</string>
+    <string name="action_underline">Underline</string>
+    <string name="copied_to_clipboard">Copied to clipboard</string>
+    <string name="tile_render_failed">Couldn\'t render — tap to retry</string>
+    <string name="recovered_partial_fmt">Document partially restored: %1$d damaged items were skipped</string>
+    <string name="diagnostics_title">Diagnostics log</string>
+    <string name="diagnostics_empty">No entries yet</string>
+    <string name="size_infinite">Infinite</string>
+    <string name="tool_select">Select text</string>
 </resources>

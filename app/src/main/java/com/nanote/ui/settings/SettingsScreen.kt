@@ -20,6 +20,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import kotlin.math.roundToInt
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -104,6 +106,13 @@ class SettingsViewModel @Inject constructor(
     fun setDefaultPaper(p: String) = viewModelScope.launch { settings.setDefaultPaper(p) }
     fun setDefaultSize(s: String) = viewModelScope.launch { settings.setDefaultSize(s) }
 
+    /** v2.0 (spec 10): default highlighter opacity (0..100). */
+    val defaultHlOpacity = settings.defaultHlOpacity
+        .stateIn(viewModelScope, SharingStarted.Eagerly, 40)
+
+    fun setDefaultHlOpacity(percent: Int) =
+        viewModelScope.launch { settings.setDefaultHlOpacity(percent) }
+
     /** Applies the persisted language at first composition. */
     fun applyPersistedLanguage() = viewModelScope.launch {
         val tag = settings.languagePref()
@@ -142,6 +151,7 @@ fun SettingsScreen(vm: SettingsViewModel = hiltViewModel()) {
     val autosave by vm.autosaveMs.collectAsState()
     val appLock by vm.appLock.collectAsState()
     val lastBackup by vm.lastBackup.collectAsState()
+    val defaultHlOpacity by vm.defaultHlOpacity.collectAsState()
 
     var restorePending by remember { mutableStateOf<ByteArray?>(null) }
 
@@ -202,9 +212,22 @@ fun SettingsScreen(vm: SettingsViewModel = hiltViewModel()) {
             Spacer(Modifier.height(4.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 com.nanote.ink.engine.PAGE_SIZES_PT.keys.forEach { s ->
-                    ChoiceChip(s, defaultSize == s) { vm.setDefaultSize(s) }
+                    ChoiceChip(sizeLabel(s), defaultSize == s) { vm.setDefaultSize(s) }
                 }
             }
+
+            // v2.0 (spec 10): default highlighter opacity
+            Spacer(Modifier.height(4.dp))
+            Text(
+                stringResource(R.string.default_hl_opacity) + "  " +
+                    stringResource(R.string.opacity_percent_fmt, defaultHlOpacity),
+                style = MaterialTheme.typography.labelMedium
+            )
+            Slider(
+                value = defaultHlOpacity.toFloat(),
+                onValueChange = { vm.setDefaultHlOpacity(it.roundToInt()) },
+                valueRange = 0f..100f
+            )
 
             // ---- toolbar position (v1.1)
             SectionLabel(stringResource(R.string.toolbar_position))
@@ -388,6 +411,38 @@ fun SettingsScreen(vm: SettingsViewModel = hiltViewModel()) {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+
+            // v2.0 (spec 11): diagnostics log viewer — every PDF open, page
+            // render, save and failure lands here.
+            var showDiag by remember { mutableStateOf(false) }
+            androidx.compose.material3.OutlinedButton(onClick = { showDiag = true }) {
+                Text(stringResource(R.string.diagnostics_title))
+            }
+            if (showDiag) {
+                AlertDialog(
+                    onDismissRequest = { showDiag = false },
+                    title = { Text(stringResource(R.string.diagnostics_title)) },
+                    text = {
+                        val lines = com.nanote.core.DiagLog.snapshot()
+                        if (lines.isEmpty()) {
+                            Text(stringResource(R.string.diagnostics_empty))
+                        } else {
+                            LazyColumn(Modifier.height(360.dp)) {
+                                items(lines.asReversed()) { l ->
+                                    Text(
+                                        l,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { showDiag = false }) { Text(stringResource(R.string.ok)) }
+                    }
+                )
+            }
         }
     }
 
@@ -418,6 +473,10 @@ private fun openUpdatesPage(context: Context) {
         Toast.makeText(context, R.string.no_browser, Toast.LENGTH_SHORT).show()
     }
 }
+
+@Composable
+private fun sizeLabel(size: String): String =
+    if (size == "Infinite") stringResource(R.string.size_infinite) else size
 
 @Composable
 private fun SectionLabel(text: String) {

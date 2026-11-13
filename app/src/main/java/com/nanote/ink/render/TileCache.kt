@@ -6,6 +6,7 @@ import android.graphics.Path
 import android.graphics.Rect
 import android.graphics.RectF
 import android.util.LruCache
+import com.nanote.core.DiagLog
 import com.nanote.domain.model.PageObject
 import com.nanote.ink.engine.Bounds
 import com.nanote.ink.engine.PageDoc
@@ -46,6 +47,13 @@ class InkTileCache(
     /** Set by the view; called on the main thread when a tile finishes rendering. */
     var onTileReadyCallback: ((tile: TileInfo) -> Unit)? = null
 
+    /**
+     * v2.0: called on the main thread when a tile FAILED to render even
+     * after its automatic retry. The view surfaces the in-page "couldn't
+     * render — tap to retry" chip; it never leaves a silent gray gap.
+     */
+    var onTileFailedCallback: ((tile: TileInfo) -> Unit)? = null
+
     data class TileInfo(val bucket: Int, val tx: Int, val ty: Int)
 
     class Tile(val bitmap: Bitmap, val rev: Long, val bucket: Int)
@@ -55,6 +63,10 @@ class InkTileCache(
     }
 
     private val pending = HashSet<String>()
+
+    /** v2.0: tile keys that failed BOTH attempts — never re-requested until [clearFailures]. */
+    private val failedTiles = HashSet<String>()
+
     private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private val renderThread = Executors.newSingleThreadExecutor { r ->
         Thread(r, "nanote-tiles").apply { priority = Thread.NORM_PRIORITY - 1 }
@@ -78,11 +90,23 @@ class InkTileCache(
 
     fun zoomBucket(scale: Float): Int = (ln(scale.toDouble()) * 2f).roundToInt()
 
+    /** v2.0: failed tiles exist — the view shows the retry chip over this page. */
+    fun hasFailures(): Boolean = synchronized(failedTiles) { failedTiles.isNotEmpty() }
+
+    /** v2.0: wipe the failure set so the next draw re-requests every failed tile. */
+    fun clearFailures() {
+        synchronized(failedTiles) { failedTiles.clear() }
+    }
+
     private fun tileScaleOf(bucket: Int): Float = 2.0.pow(bucket / 2.0).toFloat()
 
     /**
      * Draws all visible tiles into [c] and requests async renders for stale or
      * missing ones. [scale]/[transX]/[transY] describe the current view matrix.
+     *
+     * v2.0: the render-request window extends one tile ring beyond the
+     * viewport in every direction (lazy loading with a pre-load margin,
+     * spec 2.1.8) so scrolling reveals already-rendered tiles.
      */
     fun drawInto(
         c: Canvas,
@@ -96,10 +120,15 @@ class InkTileCache(
         val bucket = zoomBucket(scale)
         val tileScale = tileScaleOf(bucket)
         val tilePage = TILE_PX / tileScale
-        val x0 = ((-transX) / scale / tilePage).toInt().coerceAtLeast(0)
-        val x1 = ((viewW - transX) / scale / tilePage).toInt()
-        val y0 = ((-transY) / scale / tilePage).toInt().coerceAtLeast(0)
-        val y1 = ((viewH - transY) / scale / tilePage).toInt()
+        // Visible tile range ± 1 ring = the async pre-load margin (spec 2.1.8).
+        val xv0 = ((-transX) / scale / tilePage).toInt()
+        val xv1 = ((viewW - transX) / scale / tilePage).toInt()
+        val yv0 = ((-transY) / scale / tilePage).toInt()
+        val yv1 = ((viewH - transY) / scale / tilePage).toInt()
+        val x0 = (xv0 - 1).coerceAtLeast(0)
+        val x1 = xv1 + 1
+        val y0 = (yv0 - 1).coerceAtLeast(0)
+        val y1 = yv1 + 1
         val maxTx = (pageW / tilePage).toInt()
         val maxTy = (pageH / tilePage).toInt()
         val dirty = Bounds()
@@ -117,7 +146,8 @@ class InkTileCache(
                 if (tile != null && valid) {
                     drawTile(c, tile, scale, transX, transY, tx, ty)
                 } else {
-                    requestRender(bucket, tx, ty, k)
+                    val failed = synchronized(failedTiles) { k in failedTiles }
+                    if (!failed) requestRender(bucket, tx, ty, k)
                     // Stale fallback: same position from a lower-resolution bucket.
                     var fallback: Tile? = null
                     var fb = bucket - 1
@@ -155,6 +185,17 @@ class InkTileCache(
         c.drawBitmap(tile.bitmap, srcRect, dstRectF, null)
     }
 
+    /**
+     * v2.0 hardened request path — the anti-gray-page core:
+     *  - EVERYTHING runs inside try/finally so [pending] is ALWAYS cleaned,
+     *    even on failure (v1.x leaked the pending key on the first exception,
+     *    which permanently froze that tile → gray).
+     *  - A failed render retries ONCE; a second failure records the tile in
+     *    [failedTiles] and fires [onTileFailedCallback] so the UI shows the
+     *    "couldn't render — tap to retry" chip (never a silent gray page).
+     *  - Async jobs are queued to the single render thread and are never
+     *    cancelled by earlier completions (spec 2.1.10).
+     */
     private fun requestRender(bucket: Int, tx: Int, ty: Int, k: String) {
         if (closed || !::snapshotProvider.isInitialized) return
         synchronized(pending) {
@@ -162,18 +203,43 @@ class InkTileCache(
         }
         val snapshot = snapshotProvider()
         renderThread.execute {
-            if (closed) {
+            var bitmap: Bitmap? = null
+            var failure: Throwable? = null
+            try {
+                var attempts = 0
+                while (attempts < 2 && bitmap == null) {
+                    attempts++
+                    try {
+                        bitmap = renderTile(snapshot, bucket, tx, ty)
+                        failure = null
+                    } catch (t: Throwable) {
+                        failure = t
+                        DiagLog.error(
+                            "TileCache",
+                            "render failed (attempt $attempts) bucket=$bucket tile=$tx,$ty",
+                            t
+                        )
+                    }
+                }
+                if (bitmap != null) {
+                    cache.put(k, Tile(bitmap, snapshot.revision, bucket))
+                } else {
+                    synchronized(failedTiles) { failedTiles.add(k) }
+                    val f = failure
+                    DiagLog.error("TileCache", "tile $k gave up after retry: ${f?.message}")
+                }
+            } finally {
+                // ALWAYS release the pending slot — no poisoned keys, ever.
                 synchronized(pending) { pending.remove(k) }
-                return@execute
             }
-            val bitmap = renderTile(snapshot, bucket, tx, ty)
-            if (bitmap != null) {
-                cache.put(k, Tile(bitmap, snapshot.revision, bucket))
-            }
-            synchronized(pending) { pending.remove(k) }
-            if (bitmap != null) {
+            val bmp = bitmap
+            if (bmp != null) {
                 mainHandler.post {
                     if (!closed) onTileReadyCallback?.invoke(TileInfo(bucket, tx, ty))
+                }
+            } else {
+                mainHandler.post {
+                    if (!closed) onTileFailedCallback?.invoke(TileInfo(bucket, tx, ty))
                 }
             }
         }
@@ -210,7 +276,7 @@ class InkTileCache(
         for (s in snapshot.strokes) {
             if (s.pen != PenType.HIGHLIGHTER) continue
             if (!s.bounds.intersects(tileBounds)) continue
-            painter.configure(s.pen, s.argb)
+            painter.configure(s.pen, s.argb, s.alphaPercent)
             path.rewind()
             painter.appendStrokePath(s, path)
             canvas.drawPath(path, painter.paint)
@@ -218,7 +284,7 @@ class InkTileCache(
         for (s in snapshot.strokes) {
             if (s.pen == PenType.HIGHLIGHTER) continue
             if (!s.bounds.intersects(tileBounds)) continue
-            painter.configure(s.pen, s.argb)
+            painter.configure(s.pen, s.argb, s.alphaPercent)
             path.rewind()
             painter.appendStrokePath(s, path)
             canvas.drawPath(path, painter.paint)
