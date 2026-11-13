@@ -65,17 +65,23 @@ class PageStore(private val notebooksRoot: File) {
     /**
      * Loads strokes and objects. A corrupt main file falls back to its .bak
      * (spec: "on load, fall back to the .bak if the main file is corrupt").
-     * v2.0: decoding is per-stroke fault-tolerant — damaged strokes are
-     * salvaged around and counted in [LoadedPage.droppedStrokes] instead of
-     * failing the whole page (partial recovery, spec 8.2).
+     * v2.0: decoding is per-stroke fault-tolerant — a damaged main is first
+     * salvaged; when a clean .bak exists it wins (more complete), otherwise
+     * the salvaged partial is kept and the drop count is reported in
+     * [LoadedPage.droppedStrokes] (partial recovery, spec 8.2).
      */
     @Throws(IOException::class)
     fun load(notebookId: String, pageId: String): LoadedPage {
         val ink = pageInk(notebookId, pageId)
         val main = loadStrokes(ink)
-        val strokes = main
-            ?: loadStrokes(File(ink.parentFile, ink.name + ".bak"))
-            ?: StrokeLoad(emptyList(), 0, false)
+        val bak = loadStrokes(File(ink.parentFile, ink.name + ".bak"))
+        val strokes = when {
+            main == null -> bak ?: StrokeLoad(emptyList(), 0, false)
+            bak == null -> main
+            // clean .bak beats a damaged main
+            bak.dropped == 0 && (main.dropped > 0 || main.truncated) -> bak
+            else -> main
+        }
 
         val sidecar = pageJson(notebookId, pageId)
         val objects = loadObjects(sidecar)
@@ -94,7 +100,7 @@ class PageStore(private val notebooksRoot: File) {
         if (!f.exists() || f.length() == 0L) return null
         return try {
             val r = InkFormat.decodeRecovering(f.readBytes())
-            StrokeLoad(r.strokes, r.dropped, r.truncated)
+            if (!r.valid) null else StrokeLoad(r.strokes, r.dropped, r.truncated)
         } catch (_: Exception) {
             null // corrupt -> caller falls back to .bak
         }

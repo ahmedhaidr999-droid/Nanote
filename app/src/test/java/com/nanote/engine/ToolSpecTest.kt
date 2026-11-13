@@ -58,9 +58,12 @@ class ToolSpecTest {
     }
 
     @Test
-    fun `highlighter strokes draw with the multiply highlighter pen engine`() {
+    fun `highlighter strokes draw with the src_over highlighter pen engine`() {
+        // v2.0 (spec 5.2): SRC_OVER compositing — text stays readable under
+        // the tint and overlapping highlights stack naturally (was MULTIPLY).
         val s = ToolSpec.withTool(ToolSpec(), EditorTool.HIGHLIGHTER)
-        assertThat(com.nanote.ink.engine.specOf(s.pen).multiply).isTrue()
+        assertThat(com.nanote.ink.engine.specOf(s.pen).multiply).isFalse()
+        assertThat(com.nanote.ink.engine.specOf(s.pen).alpha).isWithin(1e-3f).of(0.35f)
         // writing tools stay non-multiply
         val p = ToolSpec.withTool(s, EditorTool.PEN)
         assertThat(com.nanote.ink.engine.specOf(p.pen).multiply).isFalse()

@@ -52,7 +52,10 @@ object InkFormat {
         /** Strokes that could not be parsed and were skipped. */
         val dropped: Int,
         /** True when the blob ended mid-stroke (truncated write/crash). */
-        val truncated: Boolean
+        val truncated: Boolean,
+        /** False when the blob was unusable as a whole (bad magic/deflate) —
+         * the caller should fall back to its .bak instead of keeping this. */
+        val valid: Boolean = true
     )
 
     fun encode(strokes: List<Stroke>): ByteArray {
@@ -99,13 +102,15 @@ object InkFormat {
             DataInputStream(BufferedInputStream(InflaterInputStream(ByteArrayInputStream(bytes)))).use { d ->
                 val magic = d.readInt()
                 if (magic != MAGIC) {
-                    return DecodeResult(emptyList(), 0, 0, truncated = false)
+                    return DecodeResult(emptyList(), 0, 0, truncated = false, valid = false)
                 }
                 var version = d.readShort().toInt()
                 // Forward tolerance: an unknown future version is parsed as v2.
                 if (version != LEGACY_VERSION && version != VERSION) version = VERSION
                 val count = d.readInt()
-                if (count < 0) return DecodeResult(emptyList(), version, 0, truncated = false)
+                if (count < 0) {
+                    return DecodeResult(emptyList(), version, 0, truncated = false, valid = false)
+                }
                 val out = ArrayList<Stroke>(minOf(count, 1024))
                 for (i in 0 until count) {
                     try {
@@ -119,7 +124,7 @@ object InkFormat {
                 return DecodeResult(out, version, 0, truncated = false)
             }
         } catch (e: Exception) {
-            return DecodeResult(emptyList(), 0, 0, truncated = false)
+            return DecodeResult(emptyList(), 0, 0, truncated = false, valid = false)
         }
     }
 
