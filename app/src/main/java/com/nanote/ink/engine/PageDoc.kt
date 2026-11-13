@@ -14,8 +14,8 @@ package com.nanote.ink.engine
 class PageDoc(
     var widthPt: Float,
     var heightPt: Float,
-    val infinite: Boolean = false,
-    initialStrokes: List<Stroke> = emptyList()
+    initialStrokes: List<Stroke> = emptyList(),
+    val infinite: Boolean = false
 ) {
     private val strokes = LinkedHashMap<Int, Stroke>()
     val grid = SpatialGrid()

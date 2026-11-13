@@ -377,7 +377,7 @@ class EditorViewModel @AssistedInject constructor(
             DiagLog.warn("EditorVM", "page ${page.id}: ${loaded.droppedStrokes} strokes salvaged around")
             uiEvents.tryEmit(UiEvent.PartialRecovery(loaded.droppedStrokes))
         }
-        val doc = PageDoc(page.widthPt, page.heightPt, page.infinite, loaded.strokes)
+        val doc = PageDoc(page.widthPt, page.heightPt, loaded.strokes, page.infinite)
         doc.objects.addAll(loaded.objects)
         val s = PageSession(
             page = page,
