@@ -79,27 +79,15 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import androidx.lifecycle.viewmodel.compose.viewModel
 import com.nanote.R
 import com.nanote.data.files.ToolbarPosition
 import com.nanote.ink.render.InkCanvasView
-import com.nanote.ui.editor.EditorViewModel.Factory
-import dagger.hilt.EntryPoint
-import dagger.hilt.InstallIn
-import dagger.hilt.android.EntryPointAccessors
-import dagger.hilt.components.SingletonComponent
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
-
-/** Factory entry point so panes can create editor VMs with explicit args. */
-@EntryPoint
-@InstallIn(SingletonComponent::class)
-interface EditorVmFactoryEntryPoint {
-    fun editorViewModelFactory(): Factory
-}
 
 /**
  * The handwriting editor (spec 8 + v2.0 split workspace, spec 7):
@@ -119,13 +107,10 @@ fun EditorScreen(
     onBack: () -> Unit,
     mainVm: EditorViewModel? = null
 ) {
-    val context = LocalContext.current
-    val main: EditorViewModel = mainVm ?: viewModel(
+    val main: EditorViewModel = mainVm ?: hiltViewModel(
         key = "editor-$notebookId-$initialPageId"
-    ) {
-        EntryPointAccessors.fromApplication(
-            context.applicationContext, EditorVmFactoryEntryPoint::class.java
-        ).editorViewModelFactory().create(notebookId, initialPageId)
+    ) { factory: EditorViewModel.Factory ->
+        factory.create(notebookId, initialPageId)
     }
 
     // ---- split workspace state (spec 7) ----
@@ -232,11 +217,10 @@ fun EditorScreen(
 /** Second split pane: builds its own independent editor ViewModel (spec 7). */
 @Composable
 private fun SplitPaneHost(notebookId: String, onToggleSplit: () -> Unit) {
-    val context = LocalContext.current
-    val vm: EditorViewModel = viewModel(key = "editor-split-$notebookId") {
-        EntryPointAccessors.fromApplication(
-            context.applicationContext, EditorVmFactoryEntryPoint::class.java
-        ).editorViewModelFactory().create(notebookId, "first")
+    val vm: EditorViewModel = hiltViewModel(
+        key = "editor-split-$notebookId"
+    ) { factory: EditorViewModel.Factory ->
+        factory.create(notebookId, "first")
     }
     EditorPane(vm = vm, onClose = onToggleSplit, isPrimary = false, onToggleSplit = onToggleSplit)
 }
