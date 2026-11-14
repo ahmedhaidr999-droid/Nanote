@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+
 package com.nanote.core.design.components
 
 import androidx.compose.foundation.background
@@ -482,7 +484,7 @@ fun FolderCard(
                 overflow = TextOverflow.Ellipsis
             )
             Text(
-                text = stringResource(R.string.folder_items_count, count),
+                text = pluralStringResource(R.plurals.folder_items_count, count, count),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
