@@ -185,7 +185,16 @@ object DocumentSorter {
             SortOption.RECENTLY_MODIFIED -> documents.sortedByDescending { it.updatedAt }
             SortOption.RECENTLY_CREATED -> documents.sortedByDescending { it.createdAt }
             SortOption.NAME -> documents.sortedWith { a, b ->
-                collator.compare(a.title.ifBlank { "~" }, b.title.ifBlank { "~" })
+                // Blank titles always sort last, independent of the locale's
+                // collation rules for punctuation.
+                val aBlank = a.title.isBlank()
+                val bBlank = b.title.isBlank()
+                when {
+                    aBlank && bBlank -> 0
+                    aBlank -> 1
+                    bBlank -> -1
+                    else -> collator.compare(a.title, b.title)
+                }
             }
             SortOption.CUSTOM -> documents.sortedBy { it.sortOrder }
         }

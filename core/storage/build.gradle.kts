@@ -18,6 +18,12 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+    testOptions {
+        unitTests {
+            // DocumentFormat logs through android.util.Log on recovery paths.
+            isReturnDefaultValues = true
+        }
+    }
 }
 
 dependencies {

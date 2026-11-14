@@ -79,8 +79,9 @@ class MigrationTest {
             .callback(callback)
             .build()
         val helper = FrameworkSQLiteOpenHelperFactory().create(configuration)
-        // Force creation, then close so Room can reopen with the migration.
-        helper.writableDatabase.execSQL("SELECT 1")
+        // Accessing the database triggers onCreate; no query needed.
+        @Suppress("UNUSED_EXPRESSION")
+        helper.writableDatabase
         helper.close()
     }
 
