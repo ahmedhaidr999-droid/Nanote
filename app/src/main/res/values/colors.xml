@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Nanote Premium Blue Design System -->
+    <color name="primary_blue">#2563EB</color>
+    <color name="deep_blue">#1D4ED8</color>
+    <color name="light_blue">#DBEAFE</color>
+    <color name="accent_blue">#60A5FA</color>
+    <color name="background_light">#F8FAFC</color>
+    <color name="surface_white">#FFFFFF</color>
+    <color name="text_primary">#0F172A</color>
+    <color name="text_secondary">#64748B</color>
+    <color name="border_light">#E2E8F0</color>
+
+    <!-- Dark -->
+    <color name="dark_background">#0F172A</color>
+    <color name="dark_surface">#1E293B</color>
+    <color name="dark_primary">#3B82F6</color>
+
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+    <color name="ic_launcher_background">#2563EB</color>
+</resources>
