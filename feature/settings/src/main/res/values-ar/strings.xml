@@ -35,4 +35,14 @@
     <string name="size_kb">%1$.1f ك.ب</string>
     <string name="size_mb">%1$.1f م.ب</string>
     <string name="size_gb">%1$.1f ج.ب</string>
+
+    <!-- Part 2: input settings -->
+    <string name="finger_action">سلوك اللمس بالإصبع</string>
+    <string name="finger_action_scroll">تمرير وتكبير (القلم يكتب فقط)</string>
+    <string name="finger_action_draw">الرسم بالإصبع أيضاً</string>
+    <string name="finger_action_ignore">تجاهل لمس الإصبع</string>
+    <string name="pressure_curve">منحنى الضغط</string>
+    <string name="curve_linear">خطي</string>
+    <string name="curve_soft">ناعم</string>
+    <string name="curve_firm">قوي</string>
 </resources>

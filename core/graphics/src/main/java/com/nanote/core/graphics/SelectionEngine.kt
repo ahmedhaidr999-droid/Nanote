@@ -152,16 +152,29 @@ class ObjectSelection {
     var dragAccumX: Float = 0f
     var dragAccumY: Float = 0f
 
+    /** Live resize factors while a corner handle is dragged (§11). */
+    var liveScaleX: Float = 1f
+    var liveScaleY: Float = 1f
+
+    /** Live rotation (degrees) while the rotate handle is dragged (§11). */
+    var liveRotation: Float = 0f
+
     fun set(items: List<SelectedElement>) {
         this.items = items
         dragAccumX = 0f
         dragAccumY = 0f
+        liveScaleX = 1f
+        liveScaleY = 1f
+        liveRotation = 0f
     }
 
     fun clear() {
         items = emptyList()
         dragAccumX = 0f
         dragAccumY = 0f
+        liveScaleX = 1f
+        liveScaleY = 1f
+        liveRotation = 0f
     }
 
     /** Union bbox in world coords per page (pages assumed same in a selection). */

@@ -1,14 +1,19 @@
 package com.nanote.feature.editor
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.PointF
 import com.nanote.core.graphics.CanvasState
 import com.nanote.core.graphics.CanvasView
+import com.nanote.core.graphics.EditorClipboard
 import com.nanote.core.graphics.ElementRenderer
+import com.nanote.core.graphics.ThumbnailRenderer
 import com.nanote.core.graphics.ToolController
 import com.nanote.core.data.SettingsStore
 import com.nanote.core.model.DocumentModel
 import com.nanote.core.model.ImageElement
+import com.nanote.core.model.PageDef
+import com.nanote.core.model.PageTemplateKind
 import com.nanote.core.model.TextElement
 import com.nanote.core.model.ToolConfig
 import com.nanote.core.model.ToolType
@@ -20,11 +25,13 @@ import com.nanote.core.pdf.PdfTextExtractor
 import com.nanote.core.common.AppLog
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** Anchor + payload for the floating text-selection context menu. */
 data class TextMenuState(
@@ -40,6 +47,14 @@ data class InsertTextRequest(
     val worldY: Float,
     val existing: TextElement?,
     val sticky: Boolean
+)
+
+/** One page-strip thumbnail entry (§10). */
+data class PageThumb(
+    val index: Int,
+    val title: String,
+    val template: PageTemplateKind,
+    val bitmap: Bitmap?
 )
 
 /**
@@ -115,6 +130,27 @@ class PaneController(
 
     private val _renderState = MutableStateFlow<Map<Int, PageRender>>(emptyMap())
     val renderState: StateFlow<Map<Int, PageRender>> = _renderState
+
+    // ---------------- Part 2 state (§9 / §10) ----------------
+
+    private val _canvasMode = MutableStateFlow(doc.canvasMode)
+    val canvasMode: StateFlow<com.nanote.core.model.CanvasMode> = _canvasMode
+
+    private val thumbs = ThumbnailRenderer()
+    private val _pageThumbs = MutableStateFlow<List<PageThumb>>(emptyList())
+    val pageThumbs: StateFlow<List<PageThumb>> = _pageThumbs
+
+    private val _canPaste = MutableStateFlow(false)
+    val canPaste: StateFlow<Boolean> = _canPaste
+
+    val canGroupSelection: Boolean get() = controller.canGroup
+    val canUngroupSelection: Boolean get() = controller.canUngroup
+
+    init {
+        if (doc.canvasMode == com.nanote.core.model.CanvasMode.INFINITE) {
+            canvasState.setInfinite(true)
+        }
+    }
 
     private var attachedView: CanvasView? = null
 
@@ -208,16 +244,30 @@ class PaneController(
             settings.palmRejection.collect { controller.palmRejection = it }
         }
         externalScope.launch {
+            settings.fingerAction.collect { controller.fingerAction = it }
+        }
+        externalScope.launch {
+            settings.pressureCurve.collect { curve ->
+                renderer.pressureCurve = curve
+                renderer.clearCaches()
+                attachedView?.invalidate()
+            }
+        }
+        externalScope.launch {
             doc.revision.collect {
                 syncUndoRedo()
                 _currentPage.value = canvasState.currentPage()
+                _canPaste.value = EditorClipboard.hasContent
+                scheduleThumbRefresh()
+                updateInfiniteBounds()
             }
         }
         externalScope.launch {
             doc.structureRevision.collect {
-                canvasState.setPages(doc.pages)
+                applyLayoutMode()
                 attachedView?.notifyVisibleChanged(force = true)
                 attachedView?.invalidate()
+                refreshThumbnails()
             }
         }
         if (isPdf) {
@@ -226,11 +276,177 @@ class PaneController(
         } else {
             controller.pdfPageOf = { -1 }
         }
+        refreshThumbnails()
     }
 
     private fun syncUndoRedo() {
         _canUndo.value = doc.canUndo
         _canRedo.value = doc.canRedo
+    }
+
+    // ---------------- Part 2: canvas engine mode (§9) ----------------
+
+    private fun applyLayoutMode() {
+        if (doc.canvasMode == com.nanote.core.model.CanvasMode.INFINITE) {
+            canvasState.setInfinite(true)
+        } else {
+            canvasState.setInfinite(false)
+            canvasState.setPages(doc.pages)
+        }
+        _canvasMode.value = doc.canvasMode
+        updateInfiniteBounds()
+    }
+
+    fun setCanvasMode(mode: com.nanote.core.model.CanvasMode) {
+        if (mode == doc.canvasMode) return
+        doc.apply(doc.setCanvasModeCmd(mode))
+        applyLayoutMode()
+        syncUndoRedo()
+        attachedView?.invalidate()
+    }
+
+    /** Content bbox → infinite-mode pan clamping. */
+    private fun updateInfiniteBounds() {
+        if (doc.canvasMode != com.nanote.core.model.CanvasMode.INFINITE) return
+        var minX = Float.MAX_VALUE; var minY = Float.MAX_VALUE
+        var maxX = -Float.MAX_VALUE; var maxY = -Float.MAX_VALUE
+        for (s in doc.strokes) {
+            val b = s.bbox()
+            minX = minOf(minX, b[0]); minY = minOf(minY, b[1])
+            maxX = maxOf(maxX, b[2]); maxY = maxOf(maxY, b[3])
+        }
+        for (t in doc.texts) {
+            val h = renderer.measureTextHeight(t).toFloat()
+            minX = minOf(minX, t.x); minY = minOf(minY, t.y)
+            maxX = maxOf(maxX, t.x + t.width); maxY = maxOf(maxY, t.y + h)
+        }
+        for (i in doc.images) {
+            minX = minOf(minX, i.x); minY = minOf(minY, i.y)
+            maxX = maxOf(maxX, i.x + i.w); maxY = maxOf(maxY, i.y + i.h)
+        }
+        for (sh in doc.shapes) {
+            val b = sh.bbox()
+            minX = minOf(minX, b[0]); minY = minOf(minY, b[1])
+            maxX = maxOf(maxX, b[2]); maxY = maxOf(maxY, b[3])
+        }
+        canvasState.contentBounds = if (minX <= maxX && minY <= maxY) {
+            floatArrayOf(minX, minY, maxX, maxY)
+        } else null
+        canvasState.clampPan()
+    }
+
+    // ---------------- Part 2: page management (§10) ----------------
+
+    private var thumbJob: Job? = null
+
+    private fun scheduleThumbRefresh() {
+        thumbJob?.cancel()
+        thumbJob = externalScope.launch {
+            delay(500)
+            refreshThumbnails()
+        }
+    }
+
+    fun refreshThumbnails() {
+        val pages = doc.pages.toList()
+        val rev = doc.revision.value
+        externalScope.launch(Dispatchers.Default) {
+            val out = pages.map { def ->
+                PageThumb(
+                    index = def.index,
+                    title = def.title,
+                    template = def.template,
+                    bitmap = thumbs.thumbnail(doc, def.index, rev)
+                )
+            }
+            withContext(Dispatchers.Main) { _pageThumbs.value = out }
+        }
+    }
+
+    fun addPage(template: PageTemplateKind? = null) {
+        val last = doc.pages.lastOrNull()
+        val def = PageDef(
+            index = doc.pages.size,
+            width = last?.width ?: 595f,
+            height = last?.height ?: 842f,
+            template = template ?: last?.template ?: PageTemplateKind.BLANK
+        )
+        doc.apply(doc.addPageWithCmd(def))
+        syncUndoRedo()
+        goToPage(doc.pages.size - 1)
+    }
+
+    fun deletePage(index: Int) {
+        if (doc.pages.size <= 1) return // never delete the last page
+        doc.apply(doc.deletePageCmd(index))
+        syncUndoRedo()
+        goToPage(index.coerceIn(0, doc.pages.size - 1))
+    }
+
+    fun duplicatePage(index: Int) {
+        doc.apply(doc.duplicatePageCmd(index))
+        syncUndoRedo()
+        goToPage(index + 1)
+    }
+
+    fun renamePage(index: Int, title: String) {
+        doc.apply(doc.renamePageCmd(index, title))
+        syncUndoRedo()
+        refreshThumbnails()
+    }
+
+    fun movePageUp(index: Int) {
+        if (index <= 0) return
+        doc.apply(doc.reorderPageCmd(index, index - 1))
+        syncUndoRedo()
+    }
+
+    fun movePageDown(index: Int) {
+        if (index >= doc.pages.size - 1) return
+        doc.apply(doc.reorderPageCmd(index, index + 1))
+        syncUndoRedo()
+    }
+
+    /** Changes a page template WITHOUT touching handwriting (§10). */
+    fun setPageTemplate(index: Int, template: PageTemplateKind, color: Long = 0L) {
+        val old = doc.pages.getOrNull(index) ?: return
+        doc.apply(doc.setPageDefCmd(index, old.copy(template = template, templateColor = color)))
+        syncUndoRedo()
+        refreshThumbnails()
+    }
+
+    /** Resizes a page / flips orientation (§10). */
+    fun setPageSize(index: Int, width: Float, height: Float) {
+        val old = doc.pages.getOrNull(index) ?: return
+        if (old.pdfPage >= 0) return
+        doc.apply(doc.setPageDefCmd(index, old.copy(width = width, height = height)))
+        syncUndoRedo()
+        fitWidth()
+    }
+
+    // ---------------- Part 2: clipboard & grouping (§8) ----------------
+
+    fun copySelection(): Boolean = controller.copySelectionObjects(docId)
+
+    fun cutSelection(): Boolean = controller.cutSelectionObjects(docId)
+
+    fun paste(): Boolean {
+        val ok = controller.pasteClipboard(docId)
+        _canPaste.value = EditorClipboard.hasContent
+        syncUndoRedo()
+        return ok
+    }
+
+    fun groupSelection(): Boolean {
+        val ok = controller.groupSelection()
+        syncUndoRedo()
+        return ok
+    }
+
+    fun ungroupSelection(): Boolean {
+        val ok = controller.ungroupSelection()
+        syncUndoRedo()
+        return ok
     }
 
     // ---------------- PDF open (fast first paint) ----------------
@@ -520,6 +736,16 @@ class PaneController(
 
     fun commitInsertText(request: InsertTextRequest, text: String, size: Float, color: Long) {
         controller.commitText(request.existing, request.page, request.worldX, request.worldY, text, request.sticky, size, color)
+        _insertTextRequest.value = null
+    }
+
+    /** §12 — rich text commit from the upgraded text editor. */
+    fun commitRichText(request: InsertTextRequest, edited: TextElement) {
+        if (request.existing != null) {
+            controller.commitTextEdit(request.existing, edited)
+        } else {
+            controller.commitTextInsert(edited)
+        }
         _insertTextRequest.value = null
     }
 

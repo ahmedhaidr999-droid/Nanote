@@ -1039,6 +1039,81 @@ class DocumentRepositoryImpl @Inject constructor(
                     cs.closePath()
                     cs.stroke()
                 }
+                ShapeKind.DOUBLE_ARROW -> {
+                    cs.moveTo(x1, y1)
+                    cs.lineTo(x2, y2)
+                    val angle = atan2(y2 - y1, x2 - x1).toDouble()
+                    val head = max(12f, s.width * 4f).toDouble()
+                    for (tip in listOf(floatArrayOf(x2, y2, x1, y1), floatArrayOf(x1, y1, x2, y2))) {
+                        val tx = tip[0]; val ty = tip[1]
+                        val ox = tip[2]; val oy = tip[3]
+                        val a2 = atan2(ty - oy, tx - ox).toDouble()
+                        cs.moveTo(tx, ty)
+                        cs.lineTo(
+                            (tx + head * cos(a2 + 0.75 * Math.PI)).toFloat(),
+                            (ty + head * sin(a2 + 0.75 * Math.PI)).toFloat()
+                        )
+                        cs.moveTo(tx, ty)
+                        cs.lineTo(
+                            (tx + head * cos(a2 - 0.75 * Math.PI)).toFloat(),
+                            (ty + head * sin(a2 - 0.75 * Math.PI)).toFloat()
+                        )
+                    }
+                    cs.stroke()
+                }
+                ShapeKind.ROUNDED_RECT -> {
+                    // rect with small chamfered corners (PDF-safe approximation)
+                    val left = min(x1, x2)
+                    val right = max(x1, x2)
+                    val bottom = min(y1, y2)
+                    val top = max(y1, y2)
+                    val r = min(12f, (right - left) / 4f).coerceAtLeast(1f)
+                    cs.moveTo(left + r, bottom)
+                    cs.lineTo(right - r, bottom)
+                    cs.lineTo(right, bottom + r)
+                    cs.lineTo(right, top - r)
+                    cs.lineTo(right - r, top)
+                    cs.lineTo(left + r, top)
+                    cs.lineTo(left, top - r)
+                    cs.lineTo(left, bottom + r)
+                    cs.closePath()
+                    cs.stroke()
+                }
+                ShapeKind.ELLIPSE -> {
+                    val cx = (x1 + x2) / 2f
+                    val cy = (y1 + y2) / 2f
+                    val rx = abs(x2 - x1) / 2f
+                    val ry = abs(y2 - y1) / 2f
+                    val kx = rx * 0.5523f
+                    val ky = ry * 0.5523f
+                    cs.moveTo(cx + rx, cy)
+                    cs.curveTo(cx + rx, cy + ky, cx + kx, cy + ry, cx, cy + ry)
+                    cs.curveTo(cx - kx, cy + ry, cx - rx, cy + ky, cx - rx, cy)
+                    cs.curveTo(cx - rx, cy - ky, cx - kx, cy - ry, cx, cy - ry)
+                    cs.curveTo(cx + kx, cy - ry, cx + rx, cy - ky, cx + rx, cy)
+                    cs.closePath()
+                    cs.stroke()
+                }
+                ShapeKind.POLYGON -> {
+                    val left = min(x1, x2)
+                    val top = min(y1, y2)
+                    val w = abs(x2 - x1)
+                    val h = abs(y2 - y1)
+                    if (s.vertices.size >= 6) {
+                        var i = 0
+                        while (i + 1 < s.vertices.size) {
+                            val vx = left + s.vertices[i].coerceIn(0f, 1f) * w
+                            val vy = top + s.vertices[i + 1].coerceIn(0f, 1f) * h
+                            if (i == 0) cs.moveTo(vx, vy) else cs.lineTo(vx, vy)
+                            i += 2
+                        }
+                        cs.closePath()
+                        cs.stroke()
+                    } else {
+                        cs.addRect(left, top, w, h)
+                        cs.stroke()
+                    }
+                }
             }
         } catch (t: Throwable) {
             AppLog.e(TAG, "exportPdf: shape ${s.id} failed", t)

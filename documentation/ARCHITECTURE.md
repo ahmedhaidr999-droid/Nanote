@@ -122,3 +122,37 @@ NotebookFormDialog (feature:notebooks)
 * **CI:** debug build of all modules, unit tests, `:app:lintDebug`,
   `assembleDebugAndroidTest`, signed release APK (see
   `.github/workflows/build.yml`).
+
+
+## Part 2 additions — handwriting engine layer
+
+```
+core/graphics/                    engine (Android-aware)
+├── CanvasView.kt                 surface: touch/stylus routing, historical
+│                                 event replay, overlays (handles, lasso,
+│                                 eraser cursor, laser)
+├── ToolController.kt             input brain: pens, erasers, selection
+│                                 gestures, clipboard, grouping, recognition
+├── ElementRenderer.kt            per-tool ink engines, rich text, shapes,
+│                                 images; path/layout/LRU caches
+├── PageBackgrounds.kt            12 page templates + infinite dot grid
+├── SpatialIndex.kt               uniform-grid broad-phase queries
+├── ThumbnailRenderer.kt          page-rail thumbnails (thread-safe)
+├── EditorClipboard.kt            process-wide vector clipboard
+└── SelectionEngine.kt            text + object selection state
+
+core/model/                       pure Kotlin, JVM-testable
+├── StrokeOps.kt                  capsule-split partial erase, transforms,
+│                                 rect/polygon geometric hit tests, smoothing
+├── ShapeRecognition.kt           deterministic recognition (no AI)
+└── DocumentModel.kt              command pattern incl. page ops, groups,
+                                  composites, canvas-mode switching
+```
+
+Data flow: `CanvasView` (raw MotionEvent incl. tilt/timestamps/pressure) →
+`ToolController` (gesture state machines) → `DocumentModel` commands (undo
+history + revision flows) → `ElementRenderer` (cached vector drawing) →
+`AutosaveManager` → `DocumentFormat` (atomic `.nanote` v3 writes).
+
+Format v3 is fully backward compatible: every new field decodes with defaults
+from v1/v2 files, and `DocumentMigrations` walks versions step by step.

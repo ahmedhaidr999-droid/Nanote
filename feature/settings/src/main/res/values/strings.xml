@@ -35,4 +35,14 @@
     <string name="size_kb">%1$.1f KB</string>
     <string name="size_mb">%1$.1f MB</string>
     <string name="size_gb">%1$.1f GB</string>
+
+    <!-- Part 2: input settings -->
+    <string name="finger_action">Finger behavior</string>
+    <string name="finger_action_scroll">Scroll and zoom (stylus draws)</string>
+    <string name="finger_action_draw">Draw with finger too</string>
+    <string name="finger_action_ignore">Ignore finger input</string>
+    <string name="pressure_curve">Pressure curve</string>
+    <string name="curve_linear">Linear</string>
+    <string name="curve_soft">Soft</string>
+    <string name="curve_firm">Firm</string>
 </resources>

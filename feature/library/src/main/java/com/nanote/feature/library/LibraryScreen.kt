@@ -780,6 +780,7 @@ private fun pageSizeNameOf(meta: DocumentMeta): String = when (meta.pageSize) {
     com.nanote.core.model.PageSize.A4 -> stringResource(com.nanote.feature.notebooks.R.string.size_a4)
     com.nanote.core.model.PageSize.A5 -> stringResource(com.nanote.feature.notebooks.R.string.size_a5)
     com.nanote.core.model.PageSize.LETTER -> stringResource(com.nanote.feature.notebooks.R.string.size_letter)
+    com.nanote.core.model.PageSize.LEGAL -> stringResource(com.nanote.feature.notebooks.R.string.size_legal)
 }
 
 @Composable

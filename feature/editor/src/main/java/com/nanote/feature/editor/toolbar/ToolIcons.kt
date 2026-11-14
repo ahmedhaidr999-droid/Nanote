@@ -11,6 +11,7 @@ import androidx.compose.material.icons.outlined.Draw
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Gesture
 import androidx.compose.material.icons.outlined.Highlight
+import androidx.compose.material.icons.outlined.HistoryEdu
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Interests
 import androidx.compose.material.icons.outlined.MoreHoriz
@@ -51,6 +52,7 @@ object ToolIcons {
         ToolType.PENCIL -> Icons.Outlined.Draw
         ToolType.BRUSH -> Icons.Outlined.Brush
         ToolType.HIGHLIGHTER -> Icons.Outlined.Highlight
+        ToolType.FOUNTAIN -> Icons.Outlined.HistoryEdu
         ToolType.ERASER -> Icons.Outlined.AutoFixNormal
         ToolType.LASER -> Icons.Outlined.CenterFocusStrong
         ToolType.LASSO -> Icons.Outlined.Gesture
@@ -75,6 +77,7 @@ object ToolIcons {
         ToolType.PENCIL -> R.string.tool_pencil
         ToolType.BRUSH -> R.string.tool_brush
         ToolType.HIGHLIGHTER -> R.string.tool_highlighter
+        ToolType.FOUNTAIN -> R.string.tool_fountain
         ToolType.ERASER -> R.string.tool_eraser
         ToolType.LASER -> R.string.tool_laser
         ToolType.LASSO -> R.string.tool_lasso

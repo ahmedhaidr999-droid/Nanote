@@ -13,6 +13,7 @@ import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.View
 import android.view.animation.DecelerateInterpolator
+import com.nanote.core.model.FingerAction
 import com.nanote.core.model.ToolType
 import com.nanote.core.pdf.PageRender
 import kotlin.math.abs
@@ -26,8 +27,12 @@ import kotlin.math.roundToInt
  *    re-render is triggered during a gesture (no lag). Re-render happens after
  *    the gesture settles, only when the discrete resolution bucket changed.
  *  - onDraw allocates nothing on the hot path; paints are preallocated, stroke
- *    paths come from the renderer cache, and elements are culled by bbox.
- *  - Stylus draws; fingers navigate (palm rejection) unless disabled.
+ *    paths come from the renderer cache, and elements are culled by bbox
+ *    (spatial-index backed in infinite mode).
+ *  - Stylus draws; fingers navigate according to the configured finger action
+ *    (§5); TOOL_TYPE_PALM never produces marks; barrel button = temp eraser.
+ *  - §4 high-frequency input: historical motion samples are replayed on every
+ *    ACTION_MOVE so stylus capture runs at full hardware rate.
  */
 @SuppressLint("ClickableViewAccessibility")
 class CanvasView @JvmOverloads constructor(
@@ -106,6 +111,15 @@ class CanvasView @JvmOverloads constructor(
     }
     private val lassoFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.parseColor("#1A2563EB")
+    }
+    private val rectSelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#2563EB")
+        style = Paint.Style.STROKE
+        strokeWidth = 1.6f
+        pathEffect = android.graphics.DashPathEffect(floatArrayOf(8f, 6f), 0f)
+    }
+    private val rectSelFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#142563EB")
     }
     private val retryTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.parseColor("#94A3B8")
@@ -199,7 +213,7 @@ class CanvasView @JvmOverloads constructor(
     }
 
     // =====================================================================
-    // Touch routing
+    // Touch routing (§4 / §5)
     // =====================================================================
 
     @SuppressLint("Recycle")
@@ -208,11 +222,21 @@ class CanvasView @JvmOverloads constructor(
 
         val now = System.currentTimeMillis()
         var hasStylus = false
+        var hasEraserTool = false
         for (i in 0 until event.pointerCount) {
-            if (event.getToolType(i) == MotionEvent.TOOL_TYPE_STYLUS) hasStylus = true
+            when (event.getToolType(i)) {
+                MotionEvent.TOOL_TYPE_STYLUS -> hasStylus = true
+                // §2 — hardware eraser end of the stylus erases too
+                MotionEvent.TOOL_TYPE_ERASER -> hasEraserTool = true
+                else -> {}
+            }
         }
         if (hasStylus) lastStylusTime = now
         val stylusRecently = now - lastStylusTime < 400
+
+        // barrel button or dedicated eraser tip = temporary eraser (§2)
+        controller.tempEraserActive = hasEraserTool ||
+            (event.buttonState and MotionEvent.BUTTON_STYLUS_PRIMARY) != 0
 
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
@@ -223,16 +247,19 @@ class CanvasView @JvmOverloads constructor(
                 inputMode = InputMode.NONE
                 stylusDrawing = false
 
-                val isStylus = event.getToolType(0) == MotionEvent.TOOL_TYPE_STYLUS
-                val pressure = event.getPressure(0)
+                val idx = event.actionIndex
+                val isStylus = event.getToolType(idx) == MotionEvent.TOOL_TYPE_STYLUS
+                val pressure = event.getPressure(idx)
+                val tilt = tiltOf(event, idx)
+                val nanos = event.eventTime * 1_000_000L // µs → ns
 
-                // Palm rejection: finger while stylus just drew → ignore entirely.
+                // Hard palm guard: finger while stylus just drew → ignore entirely.
                 if (!isStylus && stylusRecently && controller.palmRejection) {
                     inputMode = InputMode.NONE
                     return true
                 }
 
-                val consumed = controller.onActionDown(event.x, event.y, isStylus, pressure)
+                val consumed = controller.onActionDown(event.x, event.y, isStylus, pressure, tilt, nanos)
                 if (consumed) {
                     inputMode = InputMode.CONTROLLER
                     if (controller.liveStrokePoints != null) {
@@ -269,11 +296,22 @@ class CanvasView @JvmOverloads constructor(
 
                 when (inputMode) {
                     InputMode.STROKE, InputMode.CONTROLLER -> {
-                        val idx = event.actionIndex
+                        val idx = activePointerIndex(event)
                         val isStylus = event.getToolType(idx) == MotionEvent.TOOL_TYPE_STYLUS || stylusDrawing
+                        // §4 — replay ALL historical samples: full-rate stylus capture
+                        for (h in 0 until event.historySize) {
+                            val hx = event.getHistoricalX(idx, h)
+                            val hy = event.getHistoricalY(idx, h)
+                            val hp = event.getHistoricalPressure(idx, h)
+                            val ht = event.getHistoricalAxisValue(MotionEvent.AXIS_TILT, idx, h)
+                            val hn = event.getHistoricalEventTime(h) * 1_000_000L
+                            controller.onActionMove(hx, hy, isStylus, hp, ht, hn)
+                        }
                         val pressure = event.getPressure(idx)
-                        controller.onActionMove(event.x, event.y, isStylus, pressure)
-                        if (controller.activeTool == ToolType.ERASER) {
+                        val tilt = tiltOf(event, idx)
+                        val nanos = event.eventTime * 1_000_000L
+                        controller.onActionMove(event.x, event.y, isStylus, pressure, tilt, nanos)
+                        if (controller.activeTool == ToolType.ERASER || controller.tempEraserActive) {
                             lastEraserPos[0] = event.x; lastEraserPos[1] = event.y
                         }
                     }
@@ -314,6 +352,7 @@ class CanvasView @JvmOverloads constructor(
                 velocityTracker = null
                 inputMode = InputMode.NONE
                 stylusDrawing = false
+                controller.tempEraserActive = false
                 notifyVisibleChanged(force = true)
                 return true
             }
@@ -323,10 +362,26 @@ class CanvasView @JvmOverloads constructor(
                 velocityTracker = null
                 inputMode = InputMode.NONE
                 stylusDrawing = false
+                controller.tempEraserActive = false
                 return true
             }
         }
         return true
+    }
+
+    /** Tilt in radians when reported, else 0 (§4 — graceful on hardware without tilt). */
+    private fun tiltOf(event: MotionEvent, idx: Int): Float = try {
+        event.getAxisValue(MotionEvent.AXIS_TILT, idx)
+    } catch (t: Throwable) {
+        0f
+    }
+
+    /** The pointer that owns the current gesture (stylus preferred). */
+    private fun activePointerIndex(event: MotionEvent): Int {
+        for (i in 0 until event.pointerCount) {
+            if (event.getToolType(i) == MotionEvent.TOOL_TYPE_STYLUS) return i
+        }
+        return event.actionIndex.coerceIn(0, (event.pointerCount - 1).coerceAtLeast(0))
     }
 
     override fun computeScroll() {
@@ -375,7 +430,6 @@ class CanvasView @JvmOverloads constructor(
     override fun onDraw(canvas: Canvas) {
         if (!::state.isInitialized) return
         val t = state.transform
-        val layout = state.layout
         canvas.drawPaint(bgPaint)
 
         canvas.save()
@@ -387,6 +441,27 @@ class CanvasView @JvmOverloads constructor(
         val viewR = t.screenToWorldX(width.toFloat())
         val viewB = t.screenToWorldY(height.toFloat())
 
+        if (state.infiniteMode) {
+            drawInfiniteWorld(canvas, viewL, viewT, viewR, viewB)
+        } else {
+            drawPagedWorld(canvas, viewL, viewT, viewR, viewB)
+        }
+
+        drawLiveInput(canvas)
+
+        canvas.restore()
+
+        drawScreenOverlays(canvas)
+    }
+
+    /** §9 — the infinite canvas: dot-grid background, no page boundaries. */
+    private fun drawInfiniteWorld(canvas: Canvas, viewL: Float, viewT: Float, viewR: Float, viewB: Float) {
+        PageBackgrounds.paintInfiniteDots(canvas, viewL, viewT, viewR, viewB, dark = false)
+        drawAllContent(canvas, viewL, viewT, viewR, viewB)
+    }
+
+    private fun drawPagedWorld(canvas: Canvas, viewL: Float, viewT: Float, viewR: Float, viewB: Float) {
+        val layout = state.layout
         for (p in 0 until layout.count) {
             val top = layout.pageTop(p)
             val bottom = layout.pageBottom(p)
@@ -404,6 +479,15 @@ class CanvasView @JvmOverloads constructor(
 
             canvas.save()
             canvas.clipRect(left, top, right, bottom)
+
+            // §10 — per-page template background (never touches handwriting)
+            val def = controller.doc.pages.getOrNull(p)
+            if (def != null && def.pdfPage < 0) {
+                PageBackgrounds.paint(
+                    canvas, def.template, left, top, right, bottom,
+                    PageBackgrounds.templateColorOf(def.templateColor, dark = false)
+                )
+            }
 
             // PDF bitmap
             val render = pageRenderProvider?.invoke(p)
@@ -430,15 +514,70 @@ class CanvasView @JvmOverloads constructor(
 
             canvas.restore()
         }
-
-        drawLiveInput(canvas)
-
-        canvas.restore()
-
-        drawScreenOverlays(canvas)
     }
 
     private val retryGrayPaint = Paint().apply { color = Color.parseColor("#F1F5F9") }
+
+    /** Infinite-canvas content pass — everything lives on the unbounded plane. */
+    private fun drawAllContent(canvas: Canvas, viewL: Float, viewT: Float, viewR: Float, viewB: Float) {
+        val doc = controller.doc
+        val renderer = controller.renderer
+        val pressure = controller.pressureEnabled
+
+        for (img in doc.images) {
+            if (img.x + img.w < viewL || img.x > viewR || img.y + img.h < viewT || img.y > viewB) continue
+            val file = controller.imageResolverFor(img.path) ?: continue
+            canvas.save()
+            if (controller.isSelected(img.id)) applySelectionGhost(canvas)
+            renderer.drawImage(canvas, img, file)
+            canvas.restore()
+        }
+        for (sh in doc.shapes) {
+            val b = sh.bbox()
+            if (b[2] < viewL || b[0] > viewR || b[3] < viewT || b[1] > viewB) continue
+            canvas.save()
+            if (controller.isSelected(sh.id)) applySelectionGhost(canvas)
+            renderer.drawShape(canvas, sh)
+            canvas.restore()
+        }
+        for (tx in doc.texts) {
+            val h = renderer.measureTextHeight(tx)
+            if (tx.x + tx.width < viewL || tx.x > viewR || tx.y + h < viewT || tx.y > viewB) continue
+            canvas.save()
+            if (controller.isSelected(tx.id)) applySelectionGhost(canvas)
+            renderer.drawText(canvas, tx)
+            canvas.restore()
+        }
+        val erased = controller.erasedLive
+        for (s in controller.strokesNear(viewL, viewT, viewR, viewB)) {
+            if (erased.isNotEmpty() && s in erased) continue
+            canvas.save()
+            if (controller.isSelected(s.id)) applySelectionGhost(canvas)
+            renderer.drawStroke(canvas, s, pressure)
+            canvas.restore()
+        }
+    }
+
+    /**
+     * Applies the live selection transform (move / resize / rotate ghost, §11)
+     * to the canvas so subsequent element draws appear transformed.
+     */
+    private fun applySelectionGhost(canvas: Canvas) {
+        val sel = controller.objectSelection
+        if (sel.dragAccumX != 0f || sel.dragAccumY != 0f) {
+            canvas.translate(sel.dragAccumX, sel.dragAccumY)
+        }
+        if (sel.liveScaleX != 1f || sel.liveScaleY != 1f) {
+            val a = controller.ghostAnchor
+            canvas.translate(a.x, a.y)
+            canvas.scale(sel.liveScaleX, sel.liveScaleY)
+            canvas.translate(-a.x, -a.y)
+        }
+        if (sel.liveRotation != 0f) {
+            val c = controller.ghostRotateCenter
+            canvas.rotate(sel.liveRotation, c.x, c.y)
+        }
+    }
 
     /** All stored elements of a page (culled by viewport). */
     private fun drawPageContent(
@@ -448,7 +587,6 @@ class CanvasView @JvmOverloads constructor(
     ) {
         val doc = controller.doc
         val renderer = controller.renderer
-        val cullRect = floatArrayOf(viewL, viewT, viewR, viewB)
 
         // highlights (below ink, above page)
         for (h in doc.highlights) {
@@ -480,7 +618,7 @@ class CanvasView @JvmOverloads constructor(
             if (img.x + img.w < viewL || img.x > viewR || img.y + img.h < viewT || img.y > viewB) continue
             val file = controller.imageResolverFor(img.path) ?: continue
             canvas.save()
-            if (controller.isSelected(img.id)) canvas.translate(controller.objectSelection.dragAccumX, controller.objectSelection.dragAccumY)
+            if (controller.isSelected(img.id)) applySelectionGhost(canvas)
             renderer.drawImage(canvas, img, file)
             canvas.restore()
         }
@@ -491,7 +629,7 @@ class CanvasView @JvmOverloads constructor(
             val b = sh.bbox()
             if (b[2] < viewL || b[0] > viewR || b[3] < viewT || b[1] > viewB) continue
             canvas.save()
-            if (controller.isSelected(sh.id)) canvas.translate(controller.objectSelection.dragAccumX, controller.objectSelection.dragAccumY)
+            if (controller.isSelected(sh.id)) applySelectionGhost(canvas)
             renderer.drawShape(canvas, sh)
             canvas.restore()
         }
@@ -502,7 +640,7 @@ class CanvasView @JvmOverloads constructor(
             val h = renderer.measureTextHeight(tx)
             if (tx.x + tx.width < viewL || tx.x > viewR || tx.y + h < viewT || tx.y > viewB) continue
             canvas.save()
-            if (controller.isSelected(tx.id)) canvas.translate(controller.objectSelection.dragAccumX, controller.objectSelection.dragAccumY)
+            if (controller.isSelected(tx.id)) applySelectionGhost(canvas)
             renderer.drawText(canvas, tx)
             canvas.restore()
         }
@@ -516,39 +654,41 @@ class CanvasView @JvmOverloads constructor(
             val b = s.bbox()
             if (b[2] < viewL || b[0] > viewR || b[3] < viewT || b[1] > viewB) continue
             canvas.save()
-            if (controller.isSelected(s.id)) canvas.translate(controller.objectSelection.dragAccumX, controller.objectSelection.dragAccumY)
+            if (controller.isSelected(s.id)) applySelectionGhost(canvas)
             renderer.drawStroke(canvas, s, pressure)
             canvas.restore()
         }
-        @Suppress("UNUSED_EXPRESSION") cullRect
     }
 
-    /** In-progress stroke / shape / lasso. */
+    /** In-progress stroke / shape / lasso / rect selection. */
     private fun drawLiveInput(canvas: Canvas) {
         val c = controller
         val renderer = c.renderer
         c.liveStrokePoints?.let { pts ->
             val tool = c.liveStrokeTool
             val cfg = c.toolConfig
-            val color: Long
-            val width: Float
-            val opacity: Int
-            when (tool) {
-                ToolType.PEN -> { color = cfg.penColor; width = cfg.penWidth; opacity = cfg.penOpacity }
-                ToolType.PENCIL -> { color = cfg.pencilColor; width = cfg.pencilWidth; opacity = cfg.pencilOpacity }
-                ToolType.BRUSH -> { color = cfg.brushColor; width = cfg.brushWidth; opacity = cfg.brushOpacity }
-                ToolType.HIGHLIGHTER -> { color = cfg.highlighterColor; width = cfg.highlighterWidth; opacity = cfg.highlighterOpacity }
-                else -> { color = cfg.penColor; width = cfg.penWidth; opacity = cfg.penOpacity }
-            }
-            val path = renderer.buildLiveInkPath(pts, width, c.pressureEnabled)
-            renderer.drawLiveInk(canvas, path, color, width, opacity, tool == ToolType.HIGHLIGHTER)
+            val style = cfg.inkStyleOf(tool)
+            val path = renderer.buildLiveInkPath(
+                pts, style.width, c.pressureEnabled, tool,
+                style.pressureResponse, c.liveStrokeVelocity
+            )
+            renderer.drawLiveInk(canvas, path, style.color, style.width, style.opacity, tool)
             return
         }
         val s = c.currentShapeStart
         val e = c.currentShapeEnd
         if (s != null && e != null) {
             val cfg = c.toolConfig
-            renderer.drawLiveShape(canvas, cfg.shapeKind, s[0], s[1], e[0], e[1], cfg.shapeColor, cfg.shapeWidth)
+            renderer.drawLiveShape(canvas, cfg.shapeKind, s[0], s[1], e[0], e[1], cfg.shapeColor, cfg.shapeWidth, cfg.shapeFillColor, cfg.shapeFilled)
+            return
+        }
+        c.rectSelectionLive?.let { r ->
+            scratchRect.set(
+                kotlin.math.min(r[0], r[2]), kotlin.math.min(r[1], r[3]),
+                kotlin.math.max(r[0], r[2]), kotlin.math.max(r[1], r[3])
+            )
+            canvas.drawRect(scratchRect, rectSelFillPaint)
+            canvas.drawRect(scratchRect, rectSelPaint)
             return
         }
         c.currentLasso?.let { pts ->
@@ -583,7 +723,7 @@ class CanvasView @JvmOverloads constructor(
             }
         }
 
-        // object selection bbox + scale handle
+        // object selection bbox + handles (§11: corners, rotate, move)
         if (c.objectSelection.isActive) {
             c.objectSelection.bbox(c.doc, c.renderer)?.let { b ->
                 val dx = t.worldToScreenX(c.objectSelection.dragAccumX) - t.panX
@@ -596,15 +736,29 @@ class CanvasView @JvmOverloads constructor(
                 )
                 canvas.drawRoundRect(scratchRect, 8f, 8f, objectBBoxFillPaint)
                 canvas.drawRoundRect(scratchRect, 8f, 8f, objectBBoxPaint)
-                // corner scale handle
-                handlePaint.color = Color.parseColor("#2563EB")
-                canvas.drawCircle(scratchRect.right, scratchRect.bottom, 12f * densityScale / 2f, handlePaint)
-                canvas.drawCircle(scratchRect.right, scratchRect.bottom, 12f * densityScale / 2f, handleStrokePaint)
+                // 4 corner resize handles
+                val corners = arrayOf(
+                    scratchRect.left to scratchRect.top,
+                    scratchRect.right to scratchRect.top,
+                    scratchRect.right to scratchRect.bottom,
+                    scratchRect.left to scratchRect.bottom
+                )
+                for ((hx, hy) in corners) {
+                    drawHandle(canvas, hx, hy)
+                }
+                // rotate handle above top-center with a stem
+                val rx = scratchRect.centerX()
+                val ry = scratchRect.top - 46f
+                canvas.drawLine(rx, scratchRect.top, rx, ry + 10f, objectBBoxPaint)
+                canvas.save()
+                canvas.rotate(c.objectSelection.liveRotation, rx, ry)
+                drawRotateHandle(canvas, rx, ry)
+                canvas.restore()
             }
         }
 
         // eraser cursor
-        if (c.activeTool == ToolType.ERASER && lastEraserPos[0] != 0f) {
+        if ((c.activeTool == ToolType.ERASER || c.tempEraserActive) && lastEraserPos[0] != 0f) {
             val r = c.toolConfig.eraserSize / 2f
             canvas.drawCircle(lastEraserPos[0], lastEraserPos[1], r, eraserCursorPaint)
         }
@@ -644,6 +798,18 @@ class CanvasView @JvmOverloads constructor(
         handlePaint.color = Color.parseColor("#2563EB")
         canvas.drawCircle(x, y, 11f * densityScale / 1.6f, handlePaint)
         canvas.drawCircle(x, y, 11f * densityScale / 1.6f, handleStrokePaint)
+    }
+
+    /** Circular rotate handle with a subtle arrow glyph. */
+    private fun drawRotateHandle(canvas: Canvas, x: Float, y: Float) {
+        handlePaint.color = Color.parseColor("#0F766E")
+        canvas.drawCircle(x, y, 12f * densityScale / 1.5f, handlePaint)
+        canvas.drawCircle(x, y, 12f * densityScale / 1.5f, handleStrokePaint)
+        retryTextPaint.textSize = 12f * densityScale
+        val prev = retryTextPaint.color
+        retryTextPaint.color = Color.WHITE
+        canvas.drawText("↻", x, y + 4f * densityScale, retryTextPaint)
+        retryTextPaint.color = prev
     }
 
     // =====================================================================

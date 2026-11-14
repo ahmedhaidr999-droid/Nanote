@@ -77,6 +77,12 @@ class SettingsViewModel @Inject constructor(
 
     fun setPrefetch(enabled: Boolean) = editorSettings.setPrefetchPages(enabled)
 
+    fun setFingerAction(action: com.nanote.core.model.FingerAction) =
+        editorSettings.setFingerAction(action)
+
+    fun setPressureCurve(curve: com.nanote.core.model.PressureCurve) =
+        editorSettings.setPressureCurve(curve)
+
     // ------------------------------------------------------------- storage
 
     fun refreshStorage() {

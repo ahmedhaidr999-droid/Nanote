@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.AllInbox
+import androidx.compose.material.icons.outlined.ContentPaste
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.PictureAsPdf
 import androidx.compose.material.icons.outlined.Redo
@@ -22,6 +24,7 @@ import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Splitscreen
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.Undo
+import androidx.compose.material.icons.outlined.Wallpaper
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -47,6 +50,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nanote.feature.editor.R
 import com.nanote.feature.editor.PaneController
 import com.nanote.core.design.theme.Dimens
+import com.nanote.core.model.CanvasMode
 import kotlin.math.roundToInt
 
 /**
@@ -67,6 +71,7 @@ fun MoreMenu(
     val canUndo by pane.canUndo.collectAsStateWithLifecycle()
     val canRedo by pane.canRedo.collectAsStateWithLifecycle()
     val currentPage by pane.currentPage.collectAsStateWithLifecycle()
+    val canvasMode by pane.canvasMode.collectAsStateWithLifecycle()
     val pageCount = pane.pageCount
 
     var sliderValue by remember { mutableFloatStateOf((currentPage + 1).toFloat()) }
@@ -111,6 +116,17 @@ fun MoreMenu(
 
                 MenuRow(Icons.Outlined.Add, stringResource(R.string.add_page)) {
                     pane.addPage()
+                    onDismiss()
+                }
+                // §9 — canvas engine mode
+                MenuRow(
+                    Icons.Outlined.AllInbox,
+                    if (canvasMode == CanvasMode.INFINITE) stringResource(R.string.switch_to_paged)
+                    else stringResource(R.string.switch_to_infinite)
+                ) {
+                    pane.setCanvasMode(
+                        if (canvasMode == CanvasMode.INFINITE) CanvasMode.PAGED else CanvasMode.INFINITE
+                    )
                     onDismiss()
                 }
                 MenuRow(Icons.Outlined.PictureAsPdf, stringResource(R.string.export_pdf)) {

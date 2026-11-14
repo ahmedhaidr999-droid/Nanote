@@ -47,7 +47,42 @@ and extended only with verified, compatible additions.
 | kotlinx-serialization-json | 1.7.3 | `.nanote` document format + editor settings |
 | kotlinx-coroutines-android | 1.9.0 | Flows, dispatchers |
 
-## PDF / ink engine (preserved from v1.0.0)
+## Ink engine (Part 2, custom vector canvas)
+
+**Decision — Jetpack Ink vs. custom Canvas engine.** The Part 2 spec names
+Jetpack Ink (`androidx.ink`) as the primary candidate, with custom rendering
+allowed "when technically necessary". Verified against Google's Maven
+metadata: `androidx.ink:ink` has **no stable release** (latest is
+`1.0.0-alpha05`, alpha quality). Beyond stability, Ink's API surface
+(wet-stroke rendering via `InProgressStrokesView` + `InProgressStrokeId`)
+does not provide:
+
+- rendering of **persisted custom vector strokes** with per-tool styles
+  (fountain pressure × velocity, brush taper, pencil grain),
+- partial erase with geometry preservation,
+- selection transforms (move/resize/rotate) over stored strokes,
+- our `.nanote` v3 serialization.
+
+A custom `android.graphics.Canvas` engine (inherited from v1.0.0 and rebuilt
+for Part 2) satisfies every requirement, keeps full offline determinism, and
+preserves the existing document format. The separation of concerns demanded
+by the spec is maintained: input handling (`CanvasView` / `ToolController`),
+stroke data (`core/model`), rendering (`ElementRenderer` / `PageBackgrounds`),
+editing (`DocumentModel` commands), persistence (`DocumentFormat`).
+
+| Component | Location | Role |
+|---|---|---|
+| CanvasView | `core/graphics` | Surface + gesture/stylus routing, historical event replay, overlays |
+| ToolController | `core/graphics` | Input → commands (pens, eraser, selection, clipboard, groups) |
+| ElementRenderer | `core/graphics` | Per-tool stroke engines, rich text (StaticLayout + bidi), shapes, images |
+| PageBackgrounds | `core/graphics` | 12 template painters + infinite dot grid |
+| SpatialIndex | `core/graphics` | Uniform-grid broad-phase (erase / lasso / culling) |
+| StrokeOps | `core:model` | Pure-Kotlin erase split, transforms, geometric hit tests, smoothing |
+| ShapeRecognition | `core:model` | Deterministic geometry-only recognition (no AI) |
+| DocumentModel | `core:model` | Command-pattern undo/redo (200 steps), page ops, groups |
+| DocumentFormat | `core/storage` | Atomic JSON `.nanote` v3 + salvage reader + migrations |
+
+## PDF engine (preserved from v1.0.0)
 
 | Library | Version | License | Role |
 |---|---|---|---|
@@ -60,7 +95,7 @@ and extended only with verified, compatible additions.
 | Library | Version | Role |
 |---|---|---|
 | JUnit | 4.13.2 | Test runner + assertions |
-| Robolectric | 4.16.1 | Room + repository tests on the JVM (`@Config(sdk=[34])`) |
+| Robolectric | 4.16.1 | Room + repository + renderer tests on the JVM (`@Config(sdk=[34])`) |
 | androidx.test:core-ktx | 1.6.1 | `ApplicationProvider` |
 | androidx.test.ext:junit | 1.2.1 | Instrumented runner |
 | espresso-core | 3.6.1 | Instrumented assertions |
@@ -78,4 +113,3 @@ and extended only with verified, compatible additions.
   was verified against Google/Maven metadata before pinning.
 * Mirrors: `maven.aliyun.com` repositories are kept as **fallbacks after** google()/mavenCentral()
   so builds also work from restricted networks; official repositories come first
-  for CI stability (an aliyun 502 poisoned a whole CI run otherwise).

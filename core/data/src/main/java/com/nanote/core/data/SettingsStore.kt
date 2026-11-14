@@ -2,6 +2,9 @@ package com.nanote.core.data
 
 import android.content.Context
 import com.nanote.core.model.AppLanguage
+import com.nanote.core.model.ColorMemory
+import com.nanote.core.model.FingerAction
+import com.nanote.core.model.PressureCurve
 import com.nanote.core.model.ToolbarConfig
 import com.nanote.core.model.ThemeMode
 import com.nanote.core.model.ToolConfig
@@ -22,6 +25,9 @@ private const val KEY_PRESSURE = "pressure_sensitivity"
 private const val KEY_PALM = "palm_rejection"
 private const val KEY_PREFETCH = "prefetch_pages"
 private const val KEY_PRESETS = "tool_presets"
+private const val KEY_FINGER_ACTION = "finger_action"
+private const val KEY_PRESSURE_CURVE = "pressure_curve"
+private const val KEY_COLOR_MEMORY = "color_memory"
 
 /**
  * App settings persisted with SharedPreferences + JSON (kotlinx-serialization),
@@ -59,6 +65,18 @@ class SettingsStore(private val context: Context) {
     private val _presets = MutableStateFlow(readPresets())
     val presets: StateFlow<List<ToolPreset>> = _presets
 
+    /** §5 — what fingers do on the canvas. */
+    private val _fingerAction = MutableStateFlow(readFingerAction())
+    val fingerAction: StateFlow<FingerAction> = _fingerAction
+
+    /** §3 — global pressure response curve. */
+    private val _pressureCurve = MutableStateFlow(readPressureCurve())
+    val pressureCurve: StateFlow<PressureCurve> = _pressureCurve
+
+    /** §3 — recent + favorite ink colors. */
+    private val _colorMemory = MutableStateFlow(readColorMemory())
+    val colorMemory: StateFlow<ColorMemory> = _colorMemory
+
     // ---------------- readers ----------------
 
     private fun readTool(): ToolConfig = try {
@@ -86,6 +104,25 @@ class SettingsStore(private val context: Context) {
             ?.let { json.decodeFromString<List<ToolPreset>>(it) } ?: emptyList()
     } catch (t: Throwable) {
         emptyList()
+    }
+
+    private fun readFingerAction(): FingerAction = try {
+        FingerAction.valueOf(prefs.getString(KEY_FINGER_ACTION, FingerAction.SCROLL.name)!!)
+    } catch (t: Throwable) {
+        FingerAction.SCROLL
+    }
+
+    private fun readPressureCurve(): PressureCurve = try {
+        PressureCurve.valueOf(prefs.getString(KEY_PRESSURE_CURVE, PressureCurve.LINEAR.name)!!)
+    } catch (t: Throwable) {
+        PressureCurve.LINEAR
+    }
+
+    private fun readColorMemory(): ColorMemory = try {
+        prefs.getString(KEY_COLOR_MEMORY, null)
+            ?.let { json.decodeFromString<ColorMemory>(it) } ?: ColorMemory()
+    } catch (t: Throwable) {
+        ColorMemory()
     }
 
     // ---------------- writers ----------------
@@ -139,5 +176,33 @@ class SettingsStore(private val context: Context) {
     fun addPreset(preset: ToolPreset) {
         val list = _presets.value.filterNot { it.name == preset.name } + preset
         setPresets(list)
+    }
+
+    fun removePreset(name: String) {
+        setPresets(_presets.value.filterNot { it.name == name })
+    }
+
+    fun setFingerAction(action: FingerAction) {
+        _fingerAction.value = action
+        prefs.edit().putString(KEY_FINGER_ACTION, action.name).apply()
+    }
+
+    fun setPressureCurve(curve: PressureCurve) {
+        _pressureCurve.value = curve
+        prefs.edit().putString(KEY_PRESSURE_CURVE, curve.name).apply()
+    }
+
+    fun setColorMemory(memory: ColorMemory) {
+        _colorMemory.value = memory
+        prefs.edit().putString(KEY_COLOR_MEMORY, json.encodeToString(memory)).apply()
+    }
+
+    /** Adds a color to recents (deduped, capped). */
+    fun rememberColor(color: Long) {
+        setColorMemory(_colorMemory.value.remember(color))
+    }
+
+    fun toggleFavoriteColor(color: Long) {
+        setColorMemory(_colorMemory.value.toggleFavorite(color))
     }
 }

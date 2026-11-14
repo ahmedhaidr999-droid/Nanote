@@ -334,4 +334,5 @@ fun sizeLabel(size: PageSize): String = when (size) {
     PageSize.A4 -> stringResource(R.string.size_a4)
     PageSize.A5 -> stringResource(R.string.size_a5)
     PageSize.LETTER -> stringResource(R.string.size_letter)
+    PageSize.LEGAL -> stringResource(R.string.size_legal)
 }
