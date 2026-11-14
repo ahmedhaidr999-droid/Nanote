@@ -76,5 +76,6 @@ and extended only with verified, compatible additions.
 * Repositories own `Dispatchers.IO` switching; ViewModels stay on `viewModelScope`.
 * Version bumps are deliberate: the inherited set is CI-proven; anything new
   was verified against Google/Maven metadata before pinning.
-* Mirrors: `maven.aliyun.com` repositories are kept **before** google()/mavenCentral()
-  so builds also work from restricted networks (inherited, documented choice).
+* Mirrors: `maven.aliyun.com` repositories are kept as **fallbacks after** google()/mavenCentral()
+  so builds also work from restricted networks; official repositories come first
+  for CI stability (an aliyun 502 poisoned a whole CI run otherwise).
