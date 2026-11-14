@@ -407,9 +407,10 @@ class CanvasView @JvmOverloads constructor(
 
             // PDF bitmap
             val render = pageRenderProvider?.invoke(p)
-            if (render != null && render.bitmap != null && !render.bitmap.isRecycled) {
+            val renderBitmap = render?.bitmap
+            if (renderBitmap != null && !renderBitmap.isRecycled) {
                 scratchRect2.set(left, top, right, bottom)
-                canvas.drawBitmap(render.bitmap, null, scratchRect2, bmpPaint)
+                canvas.drawBitmap(renderBitmap, null, scratchRect2, bmpPaint)
             } else if (render != null && render.failed) {
                 // gray page + retry hint drawn in screen space later
                 canvas.drawRect(scratchRect, retryGrayPaint)

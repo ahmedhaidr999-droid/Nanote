@@ -23,4 +23,5 @@ dependencies {
     api(project(":core:model"))
     implementation(project(":core:common"))
     api(project(":core:pdf"))
+    implementation(libs.kotlinx.coroutines.android)
 }
