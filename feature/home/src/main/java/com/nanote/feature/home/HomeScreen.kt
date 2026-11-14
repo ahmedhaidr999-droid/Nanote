@@ -123,13 +123,14 @@ fun HomeScreen(
 
     val searching = query.isNotBlank()
 
+    val untitledLabel = stringResource(CommonR.string.untitled_note)
     val pdfPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri ->
         if (uri != null) {
             val fileName = DocumentFile.fromSingleUri(context, uri)?.name
             val title = fileName?.substringBeforeLast('.')?.trim()?.ifBlank { null }
-                ?: stringResource(CommonR.string.untitled_note)
+                ?: untitledLabel
             vm.importPdf(uri, title) { id ->
                 if (id == null) Toast.makeText(context, R.string.import_failed, Toast.LENGTH_SHORT).show()
                 else onOpenDocument(id)
