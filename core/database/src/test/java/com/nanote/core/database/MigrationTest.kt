@@ -1,7 +1,9 @@
 package com.nanote.core.database
 
 import android.content.Context
-import android.database.sqlite.SQLiteDatabase
+import androidx.sqlite.db.SupportSQLiteDatabase
+import androidx.sqlite.db.SupportSQLiteOpenHelper
+import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.flow.first
@@ -20,6 +22,10 @@ import org.robolectric.annotation.Config
  * MIGRATION_1_2: the v1.0.0 schema (notes + flat folders) must upgrade to
  * the Part 1 schema (notebook presentation columns, nested folders,
  * recent_activity) without losing data.
+ *
+ * The v1 database is created through the same SupportSQLiteOpenHelper
+ * machinery Room uses (like MigrationTestHelper, but inline) to avoid any
+ * raw-SQLiteDatabase interop quirks.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -38,40 +44,55 @@ class MigrationTest {
         if (::db.isInitialized) db.close()
     }
 
+    /** Creates a v1.0.0-shaped database file through the framework factory. */
+    private fun createV1Database(name: String) {
+        val callback = object : SupportSQLiteOpenHelper.Callback(1) {
+            override fun onCreate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """CREATE TABLE IF NOT EXISTS notes (
+                        id TEXT NOT NULL PRIMARY KEY,
+                        title TEXT NOT NULL,
+                        kind TEXT NOT NULL,
+                        favorite INTEGER NOT NULL,
+                        folderId TEXT,
+                        createdAt INTEGER NOT NULL,
+                        updatedAt INTEGER NOT NULL,
+                        pageCount INTEGER NOT NULL)"""
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_notes_folderId ON notes(folderId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_notes_updatedAt ON notes(updatedAt)")
+                db.execSQL(
+                    """CREATE TABLE IF NOT EXISTS folders (
+                        id TEXT NOT NULL PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        sortOrder INTEGER NOT NULL)"""
+                )
+                db.execSQL("INSERT INTO notes VALUES ('n1', 'Old note', 'NOTE', 0, NULL, 10, 20, 3)")
+                db.execSQL("INSERT INTO notes VALUES ('n2', 'Old PDF', 'PDF', 1, NULL, 11, 21, 9)")
+                db.execSQL("INSERT INTO folders VALUES ('f1', 'Docs', 0)")
+            }
+
+            override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+        }
+        val configuration = SupportSQLiteOpenHelper.Configuration.builder(context)
+            .name(name)
+            .callback(callback)
+            .build()
+        val helper = FrameworkSQLiteOpenHelperFactory().create(configuration)
+        // Force creation, then close so Room can reopen with the migration.
+        helper.writableDatabase.execSQL("SELECT 1")
+        helper.close()
+    }
+
     @Test
     fun migrate1To2_preservesRowsAndAddsColumns() = runBlocking {
-        val dbFile = context.getDatabasePath("migration-test.db")
-        dbFile.parentFile?.mkdirs()
-        dbFile.delete()
-
-        // --- v1.0.0 schema, written by hand exactly as Room v1 generated it.
-        val sqlite = SQLiteDatabase.openOrCreateDatabase(dbFile, null)
-        sqlite.execSQL(
-            """CREATE TABLE IF NOT EXISTS notes (
-                id TEXT NOT NULL PRIMARY KEY,
-                title TEXT NOT NULL,
-                kind TEXT NOT NULL,
-                favorite INTEGER NOT NULL,
-                folderId TEXT,
-                createdAt INTEGER NOT NULL,
-                updatedAt INTEGER NOT NULL,
-                pageCount INTEGER NOT NULL)"""
-        )
-        sqlite.execSQL("CREATE INDEX IF NOT EXISTS index_notes_folderId ON notes(folderId)")
-        sqlite.execSQL("CREATE INDEX IF NOT EXISTS index_notes_updatedAt ON notes(updatedAt)")
-        sqlite.execSQL(
-            """CREATE TABLE IF NOT EXISTS folders (
-                id TEXT NOT NULL PRIMARY KEY,
-                name TEXT NOT NULL,
-                sortOrder INTEGER NOT NULL)"""
-        )
-        sqlite.execSQL("INSERT INTO notes VALUES ('n1', 'Old note', 'NOTE', 0, NULL, 10, 20, 3)")
-        sqlite.execSQL("INSERT INTO notes VALUES ('n2', 'Old PDF', 'PDF', 1, NULL, 11, 21, 9)")
-        sqlite.execSQL("INSERT INTO folders VALUES ('f1', 'Docs', 0)")
-        sqlite.close()
+        val dbName = "migration-test.db"
+        context.getDatabasePath(dbName).parentFile?.mkdirs()
+        context.getDatabasePath(dbName).delete()
+        createV1Database(dbName)
 
         // --- open with Room; the migration runs and the schema is validated.
-        db = Room.databaseBuilder(context, AppDatabase::class.java, "migration-test.db")
+        db = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
             .addMigrations(AppDatabase.MIGRATION_1_2)
             .allowMainThreadQueries()
             .build()
