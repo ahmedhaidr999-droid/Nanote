@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="nb_cover_color">Cover color</string>
+    <string name="nb_icon">Notebook icon</string>
+    <string name="nb_template">Page template</string>
+    <string name="nb_orientation">Page orientation</string>
+    <string name="nb_page_size">Page size</string>
+    <string name="nb_portrait">Portrait</string>
+    <string name="nb_landscape">Landscape</string>
+    <string name="template_plain">Plain</string>
+    <string name="template_lined">Lined</string>
+    <string name="template_grid">Grid</string>
+    <string name="template_dotted">Dotted</string>
+    <string name="template_cornell">Cornell</string>
+    <string name="size_a4">A4</string>
+    <string name="size_a5">A5</string>
+    <string name="size_letter">Letter</string>
+</resources>

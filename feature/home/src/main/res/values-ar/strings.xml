@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="home_recent">فُتحت مؤخراً</string>
+    <string name="home_activity">النشاط الأخير</string>
+    <string name="home_empty_title">مرحباً بك في Nanote</string>
+    <string name="home_empty_subtitle">أنشئ أول دفتر لك أو استورد مستنداً لتبدأ الكتابة</string>
+    <string name="see_all">عرض الكل</string>
+    <string name="search_documents_section">المستندات</string>
+    <string name="search_folders_section">المجلدات</string>
+    <string name="import_failed">فشل الاستيراد</string>
+    <string name="activity_created">تم إنشاء \"%1$s\"</string>
+    <string name="activity_opened">تم فتح \"%1$s\"</string>
+    <string name="activity_renamed">تمت إعادة تسمية \"%1$s\"</string>
+    <string name="activity_duplicated">تم تكرار \"%1$s\"</string>
+    <string name="activity_imported">تم استيراد \"%1$s\"</string>
+    <string name="activity_moved">تم نقل \"%1$s\"</string>
+    <string name="activity_favorited">تمت إضافة \"%1$s\" إلى المفضلة</string>
+</resources>

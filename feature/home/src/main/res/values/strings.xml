@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="home_recent">Recently opened</string>
+    <string name="home_activity">Recent activity</string>
+    <string name="home_empty_title">Welcome to Nanote</string>
+    <string name="home_empty_subtitle">Create your first notebook or import a document to start writing</string>
+    <string name="see_all">See all</string>
+    <string name="search_documents_section">Documents</string>
+    <string name="search_folders_section">Folders</string>
+    <string name="import_failed">Import failed</string>
+    <string name="activity_created">Created \"%1$s\"</string>
+    <string name="activity_opened">Opened \"%1$s\"</string>
+    <string name="activity_renamed">Renamed \"%1$s\"</string>
+    <string name="activity_duplicated">Duplicated \"%1$s\"</string>
+    <string name="activity_imported">Imported \"%1$s\"</string>
+    <string name="activity_moved">Moved \"%1$s\"</string>
+    <string name="activity_favorited">Added \"%1$s\" to favorites</string>
+</resources>

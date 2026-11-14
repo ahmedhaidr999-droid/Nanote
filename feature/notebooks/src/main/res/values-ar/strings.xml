@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="nb_cover_color">لون الغلاف</string>
+    <string name="nb_icon">أيقونة الدفتر</string>
+    <string name="nb_template">قالب الصفحة</string>
+    <string name="nb_orientation">اتجاه الصفحة</string>
+    <string name="nb_page_size">مقاس الصفحة</string>
+    <string name="nb_portrait">طولي</string>
+    <string name="nb_landscape">عرضي</string>
+    <string name="template_plain">سادة</string>
+    <string name="template_lined">مسطر</string>
+    <string name="template_grid">مربعات</string>
+    <string name="template_dotted">منقّط</string>
+    <string name="template_cornell">كورنيل</string>
+    <string name="size_a4">A4</string>
+    <string name="size_a5">A5</string>
+    <string name="size_letter">Letter</string>
+</resources>

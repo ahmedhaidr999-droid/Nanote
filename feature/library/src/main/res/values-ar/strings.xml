@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="library_title">المكتبة</string>
+    <string name="filter_all">الكل</string>
+    <string name="filter_notebooks">الدفاتر</string>
+    <string name="filter_imported">المستوردة</string>
+    <string name="filter_recent">الأحدث</string>
+    <string name="library_empty_title">لا يوجد شيء هنا بعد</string>
+    <string name="library_empty_subtitle">أنشئ دفتراً أو استورد مستنداً للبدء</string>
+    <string name="no_results">لا توجد مستندات مطابقة</string>
+    <string name="search">بحث</string>
+    <string name="back">رجوع</string>
+    <string name="more_options">خيارات إضافية</string>
+    <string name="new_notebook">دفتر جديد</string>
+    <string name="new_folder">مجلد جديد</string>
+    <string name="folder_name_hint">اسم المجلد</string>
+    <string name="import_pdf">استيراد PDF</string>
+    <string name="import_nanote">استيراد .nanote</string>
+    <string name="import_failed">فشل الاستيراد</string>
+    <string name="notebook_settings">إعدادات الدفتر</string>
+    <string name="move_to_folder">نقل إلى مجلد</string>
+    <string name="move_up">نقل لأعلى</string>
+    <string name="move_down">نقل لأسفل</string>
+    <string name="details">التفاصيل</string>
+    <string name="action_open">فتح</string>
+    <string name="selected_count">تم تحديد %1$d</string>
+    <string name="select_all">تحديد الكل</string>
+    <string name="clear_selection">إلغاء التحديد</string>
+    <string name="deleted_items">تم الحذف</string>
+    <string name="moved_items">تم النقل</string>
+    <string name="delete_document_title">حذف المستند؟</string>
+    <string name="delete_document_msg">سيُحذف \"%1$s\" وكل محتواه نهائياً.</string>
+    <string name="delete_documents_title">حذف المستندات المحددة؟</string>
+    <string name="delete_documents_msg">سيُحذف %1$d مستنداً وكل محتواها نهائياً.</string>
+    <string name="detail_title">العنوان</string>
+    <string name="detail_kind">النوع</string>
+    <string name="detail_pages">الصفحات</string>
+    <string name="detail_created">تاريخ الإنشاء</string>
+    <string name="detail_modified">تاريخ التعديل</string>
+    <string name="detail_opened">آخر فتح</string>
+    <string name="detail_template">قالب الصفحة</string>
+    <string name="detail_size">مقاس الصفحة</string>
+</resources>

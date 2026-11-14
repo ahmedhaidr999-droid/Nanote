@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Nanote</string>
+
+    <!-- Navigation -->
+    <string name="nav_home">الرئيسية</string>
+    <string name="nav_library">المكتبة</string>
+    <string name="nav_notebooks">الدفاتر</string>
+    <string name="nav_folders">المجلدات</string>
+    <string name="nav_favorites">المفضلة</string>
+    <string name="nav_settings">الإعدادات</string>
+
+    <!-- Search / sort / view -->
+    <string name="search_hint">ابحث في الدفاتر والمستندات…</string>
+    <string name="clear_search">مسح البحث</string>
+    <string name="sort_by">الترتيب حسب</string>
+    <string name="sort_recently_modified">الأحدث تعديلاً</string>
+    <string name="sort_recently_created">الأحدث إنشاءً</string>
+    <string name="sort_name">أبجدياً</string>
+    <string name="sort_custom">ترتيب مخصص</string>
+    <string name="view_grid">عرض شبكي</string>
+    <string name="view_list">عرض قائمة</string>
+
+    <!-- Common actions -->
+    <string name="cancel">إلغاء</string>
+    <string name="confirm">تأكيد</string>
+    <string name="create">إنشاء</string>
+    <string name="rename">إعادة تسمية</string>
+    <string name="duplicate">تكرار</string>
+    <string name="delete">حذف</string>
+    <string name="favorite">إضافة للمفضلة</string>
+    <string name="unfavorite">إزالة من المفضلة</string>
+    <string name="untitled_note">بدون عنوان</string>
+    <string name="note_title_hint">عنوان الدفتر</string>
+    <string name="selected">محدد</string>
+    <string name="unselected">غير محدد</string>
+
+    <!-- Kinds -->
+    <string name="kind_notebook">دفتر</string>
+    <string name="kind_pdf">PDF مستورد</string>
+
+    <!-- Folders -->
+    <string name="folder_root">الرئيسية (الجذر)</string>
+    <string name="move_here">نقل إلى هنا</string>
+
+    <!-- Plurals -->
+    <plurals name="pages_count">
+        <item quantity="zero">بدون صفحات</item>
+        <item quantity="one">صفحة واحدة</item>
+        <item quantity="two">صفحتان</item>
+        <item quantity="few">%1$d صفحات</item>
+        <item quantity="many">%1$d صفحة</item>
+        <item quantity="other">%1$d صفحة</item>
+    </plurals>
+    <plurals name="folder_items_count">
+        <item quantity="zero">فارغ</item>
+        <item quantity="one">عنصر واحد</item>
+        <item quantity="two">عنصران</item>
+        <item quantity="few">%1$d عناصر</item>
+        <item quantity="many">%1$d عنصراً</item>
+        <item quantity="other">%1$d عنصر</item>
+    </plurals>
+</resources>

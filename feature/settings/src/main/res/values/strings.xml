@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="back">Back</string>
+    <string name="settings_appearance">Appearance</string>
+    <string name="theme">Theme</string>
+    <string name="theme_system">Follow system</string>
+    <string name="theme_light">Light</string>
+    <string name="theme_dark">Dark</string>
+    <string name="dynamic_colors">Dynamic colors</string>
+    <string name="dynamic_colors_desc">Use Material You wallpaper colors (accent stays Nanote)</string>
+    <string name="accent_color">Accent color</string>
+    <string name="language">Language</string>
+    <string name="lang_system">Follow system</string>
+    <string name="lang_english">English</string>
+    <string name="lang_arabic">العربية (Arabic)</string>
+    <string name="settings_library">Library</string>
+    <string name="default_view_mode">Default view</string>
+    <string name="default_sort">Default sorting</string>
+    <string name="settings_notebook_defaults">New notebook defaults</string>
+    <string name="notebook_defaults_desc">Cover, icon, page template, orientation and size used when creating notebooks</string>
+    <string name="customize_defaults">Customize defaults</string>
+    <string name="settings_pen">Pen &amp; tools</string>
+    <string name="pressure_sensitivity">Pressure sensitivity</string>
+    <string name="palm_rejection">Palm rejection</string>
+    <string name="prefetch_pages">Prefetch nearby pages</string>
+    <string name="settings_storage">Storage</string>
+    <string name="storage_usage">Storage used</string>
+    <string name="clear_thumbnails">Clear thumbnails cache</string>
+    <string name="thumbnails_cleared">Thumbnail cache cleared</string>
+    <string name="settings_about">About</string>
+    <string name="offline_statement">Nanote is 100% offline. Your notes never leave this device — no accounts, no cloud, no network permissions.</string>
+    <string name="app">App</string>
+    <string name="version">Version</string>
+    <string name="size_bytes">%1$d B</string>
+    <string name="size_kb">%1$.1f KB</string>
+    <string name="size_mb">%1$.1f MB</string>
+    <string name="size_gb">%1$.1f GB</string>
+</resources>

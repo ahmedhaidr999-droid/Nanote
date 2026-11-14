@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="new_folder">مجلد جديد</string>
+    <string name="folder_name_hint">اسم المجلد</string>
+    <string name="subfolders">المجلدات</string>
+    <string name="loose_documents">المستندات</string>
+    <string name="documents_in_folder">في هذا المجلد</string>
+    <string name="folder_empty_title">هذا المجلد فارغ</string>
+    <string name="folder_empty_subtitle">انقل مستندات إلى هنا أو أنشئ مجلداً فرعياً</string>
+    <string name="delete_folder_title">حذف المجلد؟</string>
+    <string name="delete_folder_msg">سيُحذف مجلد \"%1$s\". سينتقل ما فيه من مستندات ومجلدات فرعية مستوىً واحداً للأعلى — لن تفقد أي شيء.</string>
+    <string name="move_folder_to">نقل المجلد إلى</string>
+</resources>
