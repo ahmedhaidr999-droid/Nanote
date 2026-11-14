@@ -301,6 +301,14 @@ class PaneController(
                 fitWidth()
             }
             requestRenders(force = true)
+        } else {
+            // first layout hasn't happened yet — fit once it does
+            view.post {
+                if (!didInitialFit && attachedView === view && view.width > 0) {
+                    didInitialFit = true
+                    fitWidth()
+                }
+            }
         }
     }
 
