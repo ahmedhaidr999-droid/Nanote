@@ -23,8 +23,8 @@ android {
         applicationId = "com.nanote.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.1.0"
         vectorDrawables { useSupportLibrary = true }
     }
 
@@ -60,9 +60,6 @@ android {
     }
     kotlinOptions {
         jvmTarget = "17"
-        freeCompilerArgs = freeCompilerArgs + listOf(
-            "-opt-in=kotlinx.coroutines.ExperimentalCoroutinesApi"
-        )
     }
     buildFeatures {
         compose = true
@@ -77,6 +74,23 @@ android {
 }
 
 dependencies {
+    // Modules
+    implementation(project(":core:common"))
+    implementation(project(":core:model"))
+    implementation(project(":core:navigation"))
+    implementation(project(":core:design"))
+    implementation(project(":core:database"))
+    implementation(project(":core:storage"))
+    implementation(project(":core:data"))
+    implementation(project(":core:graphics"))
+    implementation(project(":core:pdf"))
+    implementation(project(":feature:home"))
+    implementation(project(":feature:library"))
+    implementation(project(":feature:notebooks"))
+    implementation(project(":feature:folders"))
+    implementation(project(":feature:settings"))
+    implementation(project(":feature:editor"))
+
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.core.splashscreen)
     implementation(libs.androidx.appcompat)
@@ -92,27 +106,19 @@ dependencies {
     implementation(libs.compose.ui.graphics)
     implementation(libs.compose.ui.tooling.preview)
     implementation(libs.compose.material3)
+    implementation(libs.compose.material3.window.size.class)
     implementation(libs.compose.material.icons)
     implementation(libs.compose.animation)
     debugImplementation(libs.compose.ui.tooling)
-
-    implementation(libs.room.runtime)
-    implementation(libs.room.ktx)
-    ksp(libs.room.compiler)
 
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
     implementation(libs.hilt.navigation.compose)
 
-    implementation(libs.datastore.preferences)
-    implementation(libs.kotlinx.serialization.json)
-
-    implementation(libs.pdfium.android) {
-        // pdfium-android 1.9.0 ships the legacy support library; exclude to
-        // avoid duplicate classes with androidx.core.
-        exclude(group = "com.android.support", module = "support-compat")
-    }
-    implementation(libs.pdfbox.android)
-    implementation(libs.okhttp)
-    implementation(libs.androidx.documentfile)
+    testImplementation(libs.junit4)
+    androidTestImplementation(libs.androidx.junit)
+    androidTestImplementation(libs.androidx.espresso.core)
+    androidTestImplementation(platform(libs.compose.bom))
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
 }

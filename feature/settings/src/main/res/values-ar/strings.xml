@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="back">رجوع</string>
+    <string name="settings_appearance">المظهر</string>
+    <string name="theme">السمة</string>
+    <string name="theme_system">حسب النظام</string>
+    <string name="theme_light">فاتح</string>
+    <string name="theme_dark">داكن</string>
+    <string name="dynamic_colors">الألوان الديناميكية</string>
+    <string name="dynamic_colors_desc">استخدام ألوان الخلفية (يبقى لون Nanote المميز)</string>
+    <string name="accent_color">لون التمييز</string>
+    <string name="language">اللغة</string>
+    <string name="lang_system">حسب النظام</string>
+    <string name="lang_english">English (الإنجليزية)</string>
+    <string name="lang_arabic">العربية</string>
+    <string name="settings_library">المكتبة</string>
+    <string name="default_view_mode">العرض الافتراضي</string>
+    <string name="default_sort">الترتيب الافتراضي</string>
+    <string name="settings_notebook_defaults">إعدادات الدفتر الجديد الافتراضية</string>
+    <string name="notebook_defaults_desc">الغلاف والأيقونة وقالب الصفحة والاتجاه والمقاس المستخدمة عند إنشاء الدفاتر</string>
+    <string name="customize_defaults">تخصيص الافتراضيات</string>
+    <string name="settings_pen">القلم والأدوات</string>
+    <string name="pressure_sensitivity">حساسية الضغط</string>
+    <string name="palm_rejection">منع لمس الكف</string>
+    <string name="prefetch_pages">تحميل الصفحات المجاورة مسبقاً</string>
+    <string name="settings_storage">التخزين</string>
+    <string name="storage_usage">المساحة المستخدمة</string>
+    <string name="clear_thumbnails">مسح ذاكرة الصور المصغرة</string>
+    <string name="thumbnails_cleared">تم مسح ذاكرة الصور المصغرة</string>
+    <string name="settings_about">حول التطبيق</string>
+    <string name="offline_statement">Nanote يعمل دون اتصال بنسبة 100%. ملاحظاتك لا تغادر هذا الجهاز أبداً — بلا حسابات ولا سحابة ولا صلاحيات شبكة.</string>
+    <string name="app">التطبيق</string>
+    <string name="version">الإصدار</string>
+    <string name="size_bytes">%1$d بايت</string>
+    <string name="size_kb">%1$.1f ك.ب</string>
+    <string name="size_mb">%1$.1f م.ب</string>
+    <string name="size_gb">%1$.1f ج.ب</string>
+</resources>

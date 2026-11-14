@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Editor chrome -->
+    <string name="back">رجوع</string>
+    <string name="done">تم</string>
+    <string name="undo">تراجع</string>
+    <string name="redo">إعادة</string>
+    <string name="more">المزيد</string>
+    <string name="settings">الإعدادات</string>
+    <string name="cancel">إلغاء</string>
+    <string name="delete">حذف</string>
+    <string name="duplicate">تكرار</string>
+    <string name="untitled_note">بدون عنوان</string>
+    <string name="saved">تم الحفظ</string>
+    <string name="import_failed">فشل الاستيراد</string>
+    <string name="export_failed">فشل التصدير</string>
+    <string name="export_done">تم التصدير بنجاح</string>
+    <string name="cannot_open_file">لا يمكن فتح هذا الملف</string>
+    <string name="corrupted_partial">تم استرجاع هذا الملف جزئياً. قد يكون بعض المحتوى مفقوداً.</string>
+    <string name="image_inserted">تم إدراج الصورة</string>
+    <string name="loading_pdf">جارٍ التحميل…</string>
+    <string name="render_retry">تعذر العرض — إعادة المحاولة</string>
+
+    <!-- Workspace -->
+    <string name="split_screen">تقسيم الشاشة</string>
+    <string name="exit_split">إنهاء التقسيم</string>
+    <string name="page_indicator">صفحة %1$d من %2$d</string>
+    <string name="add_page">إضافة صفحة</string>
+    <string name="zoom">تكبير</string>
+    <string name="zoom_in">تكبير</string>
+    <string name="zoom_out">تصغير</string>
+    <string name="fit_width">ملاءمة العرض</string>
+    <string name="fit_page">ملاءمة الصفحة</string>
+    <string name="actual_size">100%</string>
+    <string name="export_pdf">تصدير PDF</string>
+    <string name="export_nanote">تصدير (.nanote)</string>
+
+    <!-- Tools -->
+    <string name="tool_pen">قلم</string>
+    <string name="tool_pencil">قلم رصاص</string>
+    <string name="tool_brush">فرشاة</string>
+    <string name="tool_highlighter">قلم تظليل</string>
+    <string name="tool_eraser">ممحاة</string>
+    <string name="tool_laser">مؤشر ليزر</string>
+    <string name="tool_lasso">تحديد حر</string>
+    <string name="tool_select_object">تحديد عنصر</string>
+    <string name="tool_select_text">تحديد نص</string>
+    <string name="tool_text">نص</string>
+    <string name="tool_image">صورة</string>
+    <string name="tool_camera">كاميرا</string>
+    <string name="tool_pdf">PDF</string>
+    <string name="tool_shapes">أشكال</string>
+    <string name="tool_sticky">ملاحظة لاصقة</string>
+    <string name="tool_hand">يد</string>
+    <string name="tool_eraser_pixel">ممحاة نقطية</string>
+    <string name="tool_eraser_stroke">ممحاة خطوط</string>
+    <string name="tool_eraser_object">ممحاة عناصر</string>
+
+    <!-- Tool settings -->
+    <string name="pen_settings">إعدادات القلم</string>
+    <string name="pencil_settings">إعدادات قلم الرصاص</string>
+    <string name="brush_settings">إعدادات الفرشاة</string>
+    <string name="highlighter_settings">إعدادات التظليل</string>
+    <string name="eraser_settings">إعدادات الممحاة</string>
+    <string name="color">اللون</string>
+    <string name="custom_color">لون مخصص</string>
+    <string name="thickness">السماكة</string>
+    <string name="opacity">الشفافية</string>
+    <string name="opacity_value">%1$d%%</string>
+    <string name="presets">الإعدادات الجاهزة</string>
+    <string name="save_preset">حفظ إعداد</string>
+    <string name="eraser_size">حجم الممحاة</string>
+    <string name="shape_line">خط</string>
+    <string name="shape_arrow">سهم</string>
+    <string name="shape_rect">مستطيل</string>
+    <string name="shape_circle">دائرة</string>
+    <string name="shape_triangle">مثلث</string>
+    <string name="highlighter_opacity_note">يبقى النص مقروءاً تحت التظليل في جميع مستويات الشفافية</string>
+    <string name="width_value">%1$.1f نقطة</string>
+    <string name="preset_name">إعداد %1$d</string>
+    <string name="hue">درجة اللون</string>
+    <string name="saturation">التشبع</string>
+    <string name="brightness">السطوع</string>
+
+    <!-- Toolbar customization -->
+    <string name="customize_toolbar">تخصيص شريط الأدوات</string>
+    <string name="drag_to_reorder">اسحب لإعادة الترتيب</string>
+    <string name="visible_tools">الأدوات الظاهرة</string>
+    <string name="hidden_tools">الأدوات المخفية</string>
+    <string name="reset_toolbar">استعادة الافتراضي</string>
+    <string name="toolbar_position">موضع الشريط</string>
+    <string name="position_bottom">أسفل</string>
+    <string name="position_left">يسار</string>
+    <string name="position_right">يمين</string>
+    <string name="move_up">نقل لأعلى</string>
+    <string name="move_down">نقل لأسفل</string>
+    <string name="add_to_toolbar">إضافة إلى الشريط</string>
+    <string name="remove_from_toolbar">إزالة من الشريط</string>
+
+    <!-- Text selection menu -->
+    <string name="action_copy">نسخ</string>
+    <string name="action_highlight">تظليل</string>
+    <string name="action_underline">تسطير</string>
+    <string name="action_select_text">تحديد نص</string>
+    <string name="action_select_all">تحديد الكل</string>
+    <string name="copied">تم النسخ إلى الحافظة</string>
+    <string name="selected_words">%1$d كلمة</string>
+
+    <!-- Misc -->
+    <string name="ok">حسناً</string>
+    <string name="close">إغلاق</string>
+    <string name="insert_text_hint">اكتب هنا…</string>
+    <string name="text_layer_building">جارٍ تجهيز النص…</string>
+</resources>

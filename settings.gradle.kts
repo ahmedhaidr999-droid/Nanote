@@ -15,6 +15,7 @@ pluginManagement {
         maven { url = uri("https://jitpack.io") }
     }
 }
+
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
@@ -27,4 +28,22 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "Nanote"
+
 include(":app")
+
+include(":core:common")
+include(":core:model")
+include(":core:navigation")
+include(":core:design")
+include(":core:database")
+include(":core:storage")
+include(":core:data")
+include(":core:graphics")
+include(":core:pdf")
+
+include(":feature:home")
+include(":feature:library")
+include(":feature:notebooks")
+include(":feature:folders")
+include(":feature:settings")
+include(":feature:editor")

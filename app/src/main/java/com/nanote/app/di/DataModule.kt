@@ -1,13 +1,15 @@
 package com.nanote.app.di
 
 import android.content.Context
-import androidx.room.Room
-import com.nanote.app.core.data.SettingsStore
-import com.nanote.app.core.data.db.AppDatabase
-import com.nanote.app.core.data.db.FolderDao
-import com.nanote.app.core.data.db.NoteDao
-import com.nanote.app.core.data.repo.NotesRepository
-import com.nanote.app.core.data.repo.NotesRepositoryImpl
+import com.nanote.core.data.DataStoreUserPreferencesRepository
+import com.nanote.core.data.DocumentRepository
+import com.nanote.core.data.DocumentRepositoryImpl
+import com.nanote.core.data.SettingsStore
+import com.nanote.core.data.UserPreferencesRepository
+import com.nanote.core.database.AppDatabase
+import com.nanote.core.database.FolderDao
+import com.nanote.core.database.NoteDao
+import com.nanote.core.database.RecentActivityDao
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -16,9 +18,10 @@ import dagger.hilt.components.SingletonComponent
 import javax.inject.Singleton
 
 /**
- * Data-layer bindings: Room database, DAOs, the notes repository and the
- * settings store. Everything document-related is a singleton because it is
- * shared across the whole app (library, editor, export service).
+ * Data-layer bindings: Room database + DAOs, the document repository,
+ * the DataStore preferences repository and the legacy editor settings store.
+ * Everything document-related is a singleton because it is shared across
+ * the whole app (library, folders, editor, export).
  */
 @InstallIn(SingletonComponent::class)
 @Module
@@ -26,10 +29,7 @@ object DataModule {
 
     @Provides
     @Singleton
-    fun db(@ApplicationContext c: Context): AppDatabase =
-        Room.databaseBuilder(c, AppDatabase::class.java, "nanote.db")
-            .fallbackToDestructiveMigration()
-            .build()
+    fun db(@ApplicationContext c: Context): AppDatabase = AppDatabase.build(c)
 
     @Provides
     fun noteDao(db: AppDatabase): NoteDao = db.noteDao()
@@ -38,8 +38,16 @@ object DataModule {
     fun folderDao(db: AppDatabase): FolderDao = db.folderDao()
 
     @Provides
+    fun recentActivityDao(db: AppDatabase): RecentActivityDao = db.recentActivityDao()
+
+    @Provides
     @Singleton
-    fun notesRepository(impl: NotesRepositoryImpl): NotesRepository = impl
+    fun documentRepository(impl: DocumentRepositoryImpl): DocumentRepository = impl
+
+    @Provides
+    @Singleton
+    fun userPreferencesRepository(@ApplicationContext c: Context): UserPreferencesRepository =
+        DataStoreUserPreferencesRepository.fromContext(c)
 
     @Provides
     @Singleton

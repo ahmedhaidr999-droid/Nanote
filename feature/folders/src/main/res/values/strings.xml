@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="new_folder">New folder</string>
+    <string name="folder_name_hint">Folder name</string>
+    <string name="subfolders">Folders</string>
+    <string name="loose_documents">Documents</string>
+    <string name="documents_in_folder">In this folder</string>
+    <string name="folder_empty_title">This folder is empty</string>
+    <string name="folder_empty_subtitle">Move documents here or create a subfolder</string>
+    <string name="delete_folder_title">Delete folder?</string>
+    <string name="delete_folder_msg">The folder \"%1$s\" will be deleted. Its documents and subfolders will move up one level — nothing is lost.</string>
+    <string name="move_folder_to">Move folder to</string>
+</resources>

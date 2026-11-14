@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Nanote</string>
+
+    <!-- Navigation -->
+    <string name="nav_home">Home</string>
+    <string name="nav_library">Library</string>
+    <string name="nav_notebooks">Notebooks</string>
+    <string name="nav_folders">Folders</string>
+    <string name="nav_favorites">Favorites</string>
+    <string name="nav_settings">Settings</string>
+
+    <!-- Search / sort / view -->
+    <string name="search_hint">Search notebooks and documents…</string>
+    <string name="clear_search">Clear search</string>
+    <string name="sort_by">Sort by</string>
+    <string name="sort_recently_modified">Recently modified</string>
+    <string name="sort_recently_created">Recently created</string>
+    <string name="sort_name">Alphabetical</string>
+    <string name="sort_custom">Custom order</string>
+    <string name="view_grid">Grid view</string>
+    <string name="view_list">List view</string>
+
+    <!-- Common actions -->
+    <string name="cancel">Cancel</string>
+    <string name="confirm">Confirm</string>
+    <string name="create">Create</string>
+    <string name="rename">Rename</string>
+    <string name="duplicate">Duplicate</string>
+    <string name="delete">Delete</string>
+    <string name="favorite">Favorite</string>
+    <string name="unfavorite">Unfavorite</string>
+    <string name="untitled_note">Untitled</string>
+    <string name="note_title_hint">Notebook title</string>
+    <string name="selected">Selected</string>
+    <string name="unselected">Not selected</string>
+
+    <!-- Kinds -->
+    <string name="kind_notebook">Notebook</string>
+    <string name="kind_pdf">Imported PDF</string>
+
+    <!-- Folders -->
+    <string name="folder_root">Home (root)</string>
+    <string name="move_here">Move here</string>
+
+    <!-- Plurals -->
+    <plurals name="pages_count">
+        <item quantity="one">%1$d page</item>
+        <item quantity="other">%1$d pages</item>
+    </plurals>
+    <plurals name="folder_items_count">
+        <item quantity="one">%1$d item</item>
+        <item quantity="other">%1$d items</item>
+    </plurals>
+</resources>
