@@ -50,7 +50,7 @@ abstract class AppDatabase : RoomDatabase() {
                     """CREATE TABLE IF NOT EXISTS recent_activity (
                         id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
                         documentId TEXT NOT NULL,
-                        action TEXT NOT NULL,
+                        activityAction TEXT NOT NULL,
                         occurredAt INTEGER NOT NULL,
                         FOREIGN KEY(documentId) REFERENCES notes(id) ON UPDATE NO ACTION ON DELETE CASCADE
                     )"""

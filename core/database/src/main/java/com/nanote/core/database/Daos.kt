@@ -75,8 +75,8 @@ interface NoteDao {
     @Query("UPDATE notes SET lastOpenedAt = :ts WHERE id = :id")
     suspend fun updateLastOpened(id: String, ts: Long)
 
-    @Query("UPDATE notes SET sortOrder = :order WHERE id = :id")
-    suspend fun updateSortOrder(id: String, order: Int)
+    @Query("UPDATE notes SET sortOrder = :newOrder WHERE id = :id")
+    suspend fun updateSortOrder(id: String, newOrder: Int)
 
     /** Notebook presentation & page-defaults patch. */
     @Query(
@@ -160,7 +160,7 @@ interface RecentActivityDao {
     @Query(
         """SELECT recent_activity.id AS id,
                   recent_activity.documentId AS documentId,
-                  recent_activity.action AS action,
+                  recent_activity.activityAction AS activityAction,
                   recent_activity.occurredAt AS occurredAt,
                   notes.title AS documentTitle,
                   notes.kind AS documentKind,
@@ -183,7 +183,7 @@ interface RecentActivityDao {
 data class ActivityWithDocument(
     val id: Long,
     val documentId: String,
-    val action: String,
+    val activityAction: String,
     val occurredAt: Long,
     val documentTitle: String,
     val documentKind: String,

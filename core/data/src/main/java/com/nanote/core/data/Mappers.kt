@@ -43,7 +43,7 @@ fun com.nanote.core.database.ActivityWithDocument.toEntry() = com.nanote.core.mo
     id = id,
     documentId = documentId,
     action = try {
-        ActivityAction.valueOf(action)
+        ActivityAction.valueOf(activityAction)
     } catch (t: Throwable) {
         ActivityAction.OPENED
     },

@@ -69,7 +69,7 @@ data class FolderEntity(
 data class RecentActivityEntity(
     @PrimaryKey(autoGenerate = true) val id: Long,
     val documentId: String,
-    /** [com.nanote.core.model.ActivityAction.name]. */
-    val action: String,
+    /** "action" is reserved in Room's SQL grammar — mapped to activityAction. */
+    @ColumnInfo(name = "activityAction") val action: String,
     val occurredAt: Long
 )
