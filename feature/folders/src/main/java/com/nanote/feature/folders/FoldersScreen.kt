@@ -56,7 +56,6 @@ import com.nanote.core.design.theme.Dimens
 import com.nanote.core.model.Folder
 import com.nanote.core.model.ViewMode
 import com.nanote.feature.library.R as LibraryR
-import com.nanote.feature.library.R
 
 /**
  * Folder browser: breadcrumb navigation, nested subfolders, and the
