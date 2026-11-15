@@ -12,6 +12,11 @@ import android.os.ParcelFileDescriptor
 import com.nanote.core.database.AppDatabase
 import com.nanote.core.database.FolderEntity
 import com.nanote.core.database.NoteEntity
+import com.nanote.core.database.PdfBookmarkEntity
+import com.nanote.core.database.PdfTextPageEntity
+import com.nanote.core.database.ReadingPositionEntity
+import com.nanote.core.database.SearchHistoryEntity
+import com.nanote.core.database.TagEntity
 import com.nanote.core.storage.format.DocumentFormat
 import com.nanote.core.storage.format.DocumentMigrations
 import com.nanote.core.model.ActivityAction
@@ -20,6 +25,8 @@ import com.nanote.core.model.CreateNotebookRequest
 import com.nanote.core.model.DocumentContent
 import com.nanote.core.model.DocumentMeta
 import com.nanote.core.model.DocumentModel
+import com.nanote.core.model.ExportFormat
+import com.nanote.core.model.ExportOptions
 import com.nanote.core.model.Folder
 import com.nanote.core.model.FolderTreeNode
 import com.nanote.core.model.HighlightAnnotation
@@ -28,10 +35,19 @@ import com.nanote.core.model.LibraryFilter
 import com.nanote.core.model.NoteKind
 import com.nanote.core.model.NotebookSettings
 import com.nanote.core.model.PageDef
+import com.nanote.core.model.PdfBookmark
+import com.nanote.core.model.PdfExportMode
+import com.nanote.core.model.PdfFileInfo
+import com.nanote.core.model.PdfPageOpResult
+import com.nanote.core.model.PdfTextHit
+import com.nanote.core.model.ReadingPosition
 import com.nanote.core.model.RecentActivityEntry
+import com.nanote.core.model.RecentSearch
+import com.nanote.core.model.SearchResults
 import com.nanote.core.model.ShapeElement
 import com.nanote.core.model.ShapeKind
 import com.nanote.core.model.Stroke
+import com.nanote.core.model.Tag
 import com.nanote.core.model.TextElement
 import com.nanote.core.model.ToolType
 import com.nanote.core.model.UnderlineAnnotation
@@ -39,7 +55,13 @@ import com.nanote.core.model.highlighterAlphaOf
 import com.nanote.core.model.newId
 import com.nanote.core.model.paintAlphaOf
 import com.nanote.core.common.AppLog
+import com.nanote.core.common.ApplicationScope
 import com.nanote.core.database.RecentActivityEntity
+import com.nanote.core.pdf.PdfContentPainter
+import com.nanote.core.pdf.PdfMarkupAnnotator
+import com.nanote.core.pdf.PdfPageOps
+import com.nanote.core.pdf.PdfTextIndexer
+import com.nanote.core.pdf.PdfVerifier
 import com.shockwave.pdfium.PdfDocument
 import com.shockwave.pdfium.PdfiumCore
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
@@ -47,9 +69,6 @@ import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.PDPage
 import com.tom_roush.pdfbox.pdmodel.PDPageContentStream
 import com.tom_roush.pdfbox.pdmodel.common.PDRectangle
-import com.tom_roush.pdfbox.pdmodel.font.PDType1Font
-import com.tom_roush.pdfbox.pdmodel.graphics.image.PDImageXObject
-import com.tom_roush.pdfbox.pdmodel.graphics.state.PDExtendedGraphicsState
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import java.io.IOException
@@ -58,16 +77,13 @@ import java.io.OutputStream
 import java.util.Locale
 import javax.inject.Inject
 import kotlin.math.abs
-import kotlin.math.atan2
-import kotlin.math.cos
-import kotlin.math.max
-import kotlin.math.min
-import kotlin.math.sin
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 
@@ -77,20 +93,23 @@ import kotlinx.serialization.json.Json
  * Storage layout (under `filesDir`):
  * ```
  * documents/<docId>/doc.nanote    serialized DocumentContent (JSON, atomic writes)
- * documents/<docId>/original.pdf  the imported source PDF, when kind == PDF
+ * documents/<docId>/original.pdf  the imported source PDF, when kind == PDF (NEVER modified)
+ * documents/<docId>/edited.pdf    working copy after page operations (original stays pristine)
  * documents/<docId>/images/       embedded gallery/camera images
  * thumbnails/<docId>.png          first-page thumbnail cache
  * ```
  */
 class DocumentRepositoryImpl @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val db: AppDatabase
+    private val db: AppDatabase,
+    @ApplicationScope private val appScope: CoroutineScope
 ) : DocumentRepository {
 
     companion object {
         private const val TAG = "DocumentRepository"
         private const val DOC_FILE = "doc.nanote"
         private const val PDF_FILE = "original.pdf"
+        private const val EDITED_PDF_FILE = "edited.pdf"
         private const val IMAGES_DIR = "images"
         private const val THUMBS_DIR = "thumbnails"
         private const val DEFAULT_PAGE_W = 595f
@@ -101,6 +120,11 @@ class DocumentRepositoryImpl @Inject constructor(
     private val noteDao = db.noteDao()
     private val folderDao = db.folderDao()
     private val activityDao = db.recentActivityDao()
+    private val tagDao = db.tagDao()
+    private val pdfTextDao = db.pdfTextDao()
+    private val bookmarkDao = db.bookmarkDao()
+    private val readingPositionDao = db.readingPositionDao()
+    private val searchHistoryDao = db.searchHistoryDao()
     private val contentJson = Json {
         ignoreUnknownKeys = true
         isLenient = true
@@ -389,11 +413,21 @@ class DocumentRepositoryImpl @Inject constructor(
                     pageOrientation = com.nanote.core.model.PageOrientation.PORTRAIT.name,
                     pageSize = com.nanote.core.model.PageSize.A4.name,
                     lastOpenedAt = 0L,
-                    sortOrder = nextSortOrder()
+                    sortOrder = nextSortOrder(),
+                    fileSizeBytes = pdfFile.length(),
+                    sourceFileName = title
                 )
             )
             logActivityInternal(id, ActivityAction.IMPORTED)
-            AppLog.i(TAG, "imported PDF '$title' as $id (${pages.size} pages)")
+            AppLog.i(TAG, "imported PDF '$title' as $id (${pages.size} pages, ${pdfFile.length()} bytes)")
+            // Build the search text index off the critical path.
+            appScope.launch {
+                try {
+                    reindexPdfText(id)
+                } catch (t: Throwable) {
+                    AppLog.w(TAG, "background text index failed for $id: ${t.message}")
+                }
+            }
             id
         } catch (t: Throwable) {
             AppLog.e(TAG, "importPdf failed for $uri", t)
@@ -487,8 +521,15 @@ class DocumentRepositoryImpl @Inject constructor(
             NoteKind.NOTE
         }
         val pdfFile = if (kind == NoteKind.PDF) {
-            val f = File(docDir(id), PDF_FILE)
-            if (f.exists()) f else null
+            // Prefer the working copy when page operations created one;
+            // the untouched original stays available for ORIGINAL exports.
+            val edited = File(docDir(id), EDITED_PDF_FILE)
+            val original = File(docDir(id), PDF_FILE)
+            when {
+                edited.exists() -> edited
+                original.exists() -> original
+                else -> null
+            }
         } else {
             null
         }
@@ -499,6 +540,16 @@ class DocumentRepositoryImpl @Inject constructor(
         // Record the open (library "Recently opened" + activity feed).
         noteDao.updateLastOpened(id, System.currentTimeMillis())
         logActivityInternal(id, ActivityAction.OPENED)
+        // Lazy text-index build (first open after import if the background
+        // job at import time did not finish).
+        if (kind == NoteKind.PDF && pdfFile != null) {
+            appScope.launch {
+                try {
+                    ensureTextIndex(id)
+                } catch (_: Throwable) {
+                }
+            }
+        }
         OpenedDocument(
             meta = entity.toMeta().copy(pageCount = model.pageCount(), lastOpenedAt = System.currentTimeMillis()),
             model = model,
@@ -558,6 +609,20 @@ class DocumentRepositoryImpl @Inject constructor(
                 sortOrder = nextSortOrder()
             )
         )
+        // Duplicates carry their PDF search text + bookmarks (page-level
+        // content) with the new document id.
+        try {
+            val textRows = pdfTextDao.pagesForDoc(id)
+            if (textRows.isNotEmpty()) {
+                pdfTextDao.insertAll(textRows.map { it.copy(id = 0, documentId = newDocId) })
+            }
+            val bookmarks = bookmarkDao.getForDoc(id)
+            for (b in bookmarks) {
+                bookmarkDao.upsert(b.copy(id = newId(), documentId = newDocId))
+            }
+        } catch (t: Throwable) {
+            AppLog.w(TAG, "duplicate: index/bookmark copy failed (${t.message})")
+        }
         logActivityInternal(newDocId, ActivityAction.DUPLICATED)
         AppLog.i(TAG, "duplicated $id -> $newDocId")
         newDocId
@@ -691,101 +756,7 @@ class DocumentRepositoryImpl @Inject constructor(
     // ------------------------------------------------------------------
 
     override suspend fun exportPdf(id: String, target: OutputStream): Boolean =
-        withContext(Dispatchers.IO) {
-            var doc: PDDocument? = null
-            try {
-                ensurePdfBoxReady()
-
-                val entity = noteDao.getById(id) ?: return@withContext false
-                val loaded = DocumentFormat.load(docFile(id)) ?: return@withContext false
-                val content = DocumentMigrations.migrate(loaded.first.snapshot())
-                val kind = try {
-                    NoteKind.valueOf(entity.kind)
-                } catch (t: Throwable) {
-                    NoteKind.NOTE
-                }
-                val original = if (kind == NoteKind.PDF) File(docDir(id), PDF_FILE) else null
-                val hasOriginal = original != null && original.exists()
-
-                doc = if (hasOriginal) PDDocument.load(original) else PDDocument()
-                val document = doc!!
-
-                if (!hasOriginal) {
-                    // Plain note (or a PDF-kind import whose source PDF was
-                    // not carried over): build blank white pages.
-                    for (page in content.pages) {
-                        val w = if (page.width > 0f) page.width else DEFAULT_PAGE_W
-                        val h = if (page.height > 0f) page.height else DEFAULT_PAGE_H
-                        val pdPage = PDPage(PDRectangle(w, h))
-                        document.addPage(pdPage)
-                        PDPageContentStream(
-                            document,
-                            pdPage,
-                            PDPageContentStream.AppendMode.OVERWRITE,
-                            true,
-                            true
-                        ).use { cs ->
-                            cs.setNonStrokingColor(255, 255, 255)
-                            cs.addRect(0f, 0f, w, h)
-                            cs.fill()
-                        }
-                    }
-                }
-
-                // Flatten every content page onto its target PDF page.
-                // PDF coordinates are bottom-left origin while our world
-                // coordinates are top-left origin: y_pdf = pageHeight - y_world.
-                content.pages.forEachIndexed { index, def ->
-                    val pdfIndex = if (hasOriginal && def.pdfPage >= 0) def.pdfPage else index
-                    if (pdfIndex < 0 || pdfIndex >= document.numberOfPages) {
-                        AppLog.w(TAG, "exportPdf: content page $index out of range, skipped")
-                        return@forEachIndexed
-                    }
-                    val page = document.getPage(pdfIndex)
-                    val pageW = page.mediaBox.width
-                    val pageH = page.mediaBox.height
-                    PDPageContentStream(
-                        document,
-                        page,
-                        PDPageContentStream.AppendMode.APPEND,
-                        true,
-                        true
-                    ).use { cs ->
-                        for (h in content.highlights) {
-                            if (h.page == index) drawHighlight(cs, h, pageW, pageH)
-                        }
-                        for (u in content.underlines) {
-                            if (u.page == index) drawUnderline(cs, u, pageW, pageH)
-                        }
-                        for (s in content.shapes) {
-                            if (s.page == index) drawShape(cs, s, pageH)
-                        }
-                        for (img in content.images) {
-                            if (img.page == index) drawImage(cs, img, document, id, pageH)
-                        }
-                        for (txt in content.texts) {
-                            if (txt.page == index) drawText(cs, txt, pageH)
-                        }
-                        for (s in content.strokes) {
-                            if (s.page == index) drawStroke(cs, s, pageH)
-                        }
-                    }
-                }
-
-                document.save(target)
-                AppLog.i(TAG, "exported $id to PDF (${document.numberOfPages} pages)")
-                true
-            } catch (t: Throwable) {
-                AppLog.e(TAG, "exportPdf failed for $id", t)
-                false
-            } finally {
-                try {
-                    doc?.close()
-                } catch (t: Throwable) {
-                    AppLog.w(TAG, "exportPdf: close failed (${t.message})")
-                }
-            }
-        }
+        exportDocument(id, ExportOptions(format = ExportFormat.PDF, pdfMode = PdfExportMode.FLATTENED), target)
 
     override suspend fun exportNanote(id: String, target: OutputStream): Boolean =
         withContext(Dispatchers.IO) {
@@ -875,254 +846,770 @@ class DocumentRepositoryImpl @Inject constructor(
     }
 
     // ------------------------------------------------------------------
-    // PDF flattening helpers (pdfbox-android)
+    // Part 3 — tags, search, bookmarks, positions, page ops, exports
     // ------------------------------------------------------------------
 
-    private fun drawHighlight(
-        cs: PDPageContentStream,
-        h: HighlightAnnotation,
-        pageW: Float,
-        pageH: Float
-    ) {
-        try {
-            val gs = PDExtendedGraphicsState()
-            gs.nonStrokingAlphaConstant = highlighterAlphaOf(h.opacity) / 255f
-            cs.setGraphicsStateParameters(gs)
-            cs.setNonStrokingColor(red(h.color), green(h.color), blue(h.color))
-            for (rect in h.rects) {
-                if (rect.size < 4) continue
-                // RelRect is [x0, y0, x1, y1] top-left origin in [0..1].
-                val x0 = rect[0] * pageW
-                val y0 = rect[1] * pageH
-                val x1 = rect[2] * pageW
-                val y1 = rect[3] * pageH
-                if (x1 <= x0 || y1 <= y0) continue
-                cs.addRect(x0, pageH - y1, x1 - x0, y1 - y0)
-                cs.fill()
+    override fun observeTags(): Flow<List<Tag>> =
+        tagDao.observeTagsWithCounts().map { rows ->
+            rows.map { Tag(name = it.name, color = it.color, usageCount = it.usageCount) }
+        }
+
+    override fun observeDocumentTags(docId: String): Flow<List<String>> =
+        tagDao.observeTagsForNote(docId)
+
+    override suspend fun setDocumentTags(docId: String, tags: List<String>) {
+        val clean = tags.map { it.trim() }.filter { it.isNotEmpty() }.distinct().take(12)
+        withContext(Dispatchers.IO) {
+            val now = System.currentTimeMillis()
+            for (t in clean) {
+                tagDao.upsert(
+                    TagEntity(name = t, color = 0xFF2563EB, createdAt = now)
+                )
             }
-            resetNonStrokingAlpha(cs)
-        } catch (t: Throwable) {
-            AppLog.e(TAG, "exportPdf: highlight ${h.id} failed", t)
+            tagDao.setNoteTags(docId, clean)
+            noteDao.updateTimestamp(docId, now)
         }
     }
 
-    private fun drawUnderline(
-        cs: PDPageContentStream,
-        u: UnderlineAnnotation,
-        pageW: Float,
-        pageH: Float
-    ) {
-        try {
-            val gs = PDExtendedGraphicsState()
-            gs.strokingAlphaConstant = paintAlphaOf(u.opacity) / 255f
-            cs.setGraphicsStateParameters(gs)
-            cs.setStrokingColor(red(u.color), green(u.color), blue(u.color))
-            cs.setLineWidth(1.5f)
-            cs.setLineCapStyle(1) // round
-            for (rect in u.rects) {
-                if (rect.size < 4) continue
-                val x0 = rect[0] * pageW
-                val x1 = rect[2] * pageW
-                if (x1 <= x0) continue
-                val y = pageH - rect[3] * pageH // line at the rect bottom edge
-                cs.moveTo(x0, y)
-                cs.lineTo(x1, y)
-                cs.stroke()
+    override suspend fun deleteTag(name: String) {
+        withContext(Dispatchers.IO) { tagDao.deleteTagAndAssignments(name) }
+    }
+
+    override suspend fun searchAcross(query: String, pdfTextLimit: Int): SearchResults =
+        withContext(Dispatchers.IO) {
+            val q = query.trim()
+            if (q.isEmpty()) return@withContext SearchResults(query = q)
+            val notes = noteDao.search(q).map { it.toMeta() }
+            val folders = folderDao.getAll()
+                .filter { it.name.contains(q, ignoreCase = true) }
+                .map { it.toFolder() }
+            val tags = tagDao.search(q).map { Tag(name = it.name, color = it.color) }
+            val hits = pdfTextDao.search(q, pdfTextLimit).map { row ->
+                PdfTextHit(
+                    documentId = row.documentId,
+                    documentTitle = row.documentTitle,
+                    kind = try {
+                        NoteKind.valueOf(row.documentKind)
+                    } catch (t: Throwable) {
+                        NoteKind.PDF
+                    },
+                    coverColor = com.nanote.core.model.CoverColor.safeOf(row.coverColor),
+                    pageIndex = row.pageIndex,
+                    pdfPage = row.pdfPage,
+                    snippet = snippetAround(row.text, q)
+                )
             }
-            resetStrokingAlpha(cs)
-        } catch (t: Throwable) {
-            AppLog.e(TAG, "exportPdf: underline ${u.id} failed", t)
+            SearchResults(query = q, documents = notes, folders = folders, tags = tags, pdfTextHits = hits)
+        }
+
+    override suspend fun recordSearch(query: String) {
+        val q = query.trim()
+        if (q.isEmpty()) return
+        withContext(Dispatchers.IO) {
+            searchHistoryDao.upsert(
+                SearchHistoryEntity(query = q, searchedAt = System.currentTimeMillis())
+            )
         }
     }
 
-    private fun drawStroke(cs: PDPageContentStream, stroke: Stroke, pageH: Float) {
-        if (stroke.points.isEmpty()) return
-        val highlighter = stroke.tool == ToolType.HIGHLIGHTER
-        try {
-            val gs = PDExtendedGraphicsState()
-            gs.strokingAlphaConstant =
-                (if (highlighter) highlighterAlphaOf(stroke.opacity) else paintAlphaOf(stroke.opacity)) / 255f
-            cs.setGraphicsStateParameters(gs)
-            cs.setStrokingColor(red(stroke.color), green(stroke.color), blue(stroke.color))
-            cs.setLineCapStyle(1)   // round cap
-            cs.setLineJoinStyle(1)  // round join
-            if (stroke.points.size == 1) {
-                val p = stroke.points[0]
-                cs.setLineWidth(stroke.width.coerceAtLeast(0.1f))
-                cs.moveTo(p.x, pageH - p.y)
-                cs.lineTo(p.x + 0.1f, pageH - p.y)
-                cs.stroke()
+    override fun observeRecentSearches(limit: Int): Flow<List<RecentSearch>> =
+        searchHistoryDao.observeRecent(limit).map { rows ->
+            rows.map { RecentSearch(query = it.query, searchedAt = it.searchedAt) }
+        }
+
+    override suspend fun deleteRecentSearch(query: String) {
+        withContext(Dispatchers.IO) { searchHistoryDao.delete(query) }
+    }
+
+    override suspend fun clearSearchHistory() {
+        withContext(Dispatchers.IO) { searchHistoryDao.clear() }
+    }
+
+    private fun snippetAround(text: String, query: String, radius: Int = 42): String {
+        val idx = text.indexOf(query, ignoreCase = true)
+        if (idx < 0) return text.take(radius * 2)
+        val start = (idx - radius).coerceAtLeast(0)
+        val end = (idx + query.length + radius).coerceAtMost(text.length)
+        val prefix = if (start > 0) "…" else ""
+        val suffix = if (end < text.length) "…" else ""
+        return prefix + text.substring(start, end) + suffix
+    }
+
+    // ---------------- bookmarks & reading position ----------------
+
+    override fun observeBookmarks(docId: String): Flow<List<PdfBookmark>> =
+        bookmarkDao.observeForDoc(docId).map { rows ->
+            rows.map {
+                PdfBookmark(
+                    id = it.id, documentId = it.documentId, pageIndex = it.pageIndex,
+                    pdfPage = it.pdfPage, title = it.title, createdAt = it.createdAt
+                )
+            }
+        }
+
+    override suspend fun toggleBookmark(docId: String, pageIndex: Int, pdfPage: Int, title: String): Boolean =
+        withContext(Dispatchers.IO) {
+            val existing = bookmarkDao.getForPage(docId, pageIndex)
+            if (existing != null) {
+                bookmarkDao.delete(existing.id)
+                false
             } else {
-                var prev = stroke.points[0]
-                for (i in 1 until stroke.points.size) {
-                    val cur = stroke.points[i]
-                    // Variable pressure: each segment carries its own width.
-                    val segWidth = ((prev.p + cur.p) / 2f) * stroke.width
-                    cs.setLineWidth(segWidth.coerceAtLeast(0.1f))
-                    cs.moveTo(prev.x, pageH - prev.y)
-                    cs.lineTo(cur.x, pageH - cur.y)
-                    cs.stroke()
-                    prev = cur
-                }
+                bookmarkDao.upsert(
+                    PdfBookmarkEntity(
+                        id = newId(), documentId = docId, pageIndex = pageIndex,
+                        pdfPage = pdfPage, title = title, createdAt = System.currentTimeMillis()
+                    )
+                )
+                true
             }
-            resetStrokingAlpha(cs)
-        } catch (t: Throwable) {
-            AppLog.e(TAG, "exportPdf: stroke ${stroke.id} failed", t)
+        }
+
+    override suspend fun deleteBookmark(bookmarkId: String) {
+        withContext(Dispatchers.IO) { bookmarkDao.delete(bookmarkId) }
+    }
+
+    override suspend fun saveReadingPosition(docId: String, pageIndex: Int, zoomScale: Float) {
+        withContext(Dispatchers.IO) {
+            readingPositionDao.upsert(
+                ReadingPositionEntity(
+                    documentId = docId, pageIndex = pageIndex,
+                    zoomScale = zoomScale, savedAt = System.currentTimeMillis()
+                )
+            )
         }
     }
 
-    private fun drawShape(cs: PDPageContentStream, s: ShapeElement, pageH: Float) {
-        try {
-            cs.setStrokingColor(red(s.color), green(s.color), blue(s.color))
-            cs.setLineWidth(s.width.coerceAtLeast(0.1f))
-            cs.setLineCapStyle(1)
-            cs.setLineJoinStyle(1)
-            val x1 = s.x1
-            val y1 = pageH - s.y1
-            val x2 = s.x2
-            val y2 = pageH - s.y2
-            when (s.kind) {
-                ShapeKind.LINE -> {
-                    cs.moveTo(x1, y1)
-                    cs.lineTo(x2, y2)
-                    cs.stroke()
-                }
-                ShapeKind.ARROW -> {
-                    cs.moveTo(x1, y1)
-                    cs.lineTo(x2, y2)
-                    val angle = atan2(y2 - y1, x2 - x1).toDouble()
-                    val head = max(12f, s.width * 4f).toDouble()
-                    cs.moveTo(x2, y2)
-                    cs.lineTo(
-                        x2 + (head * cos(angle + 0.75 * Math.PI)).toFloat(),
-                        y2 + (head * sin(angle + 0.75 * Math.PI)).toFloat()
-                    )
-                    cs.moveTo(x2, y2)
-                    cs.lineTo(
-                        x2 + (head * cos(angle - 0.75 * Math.PI)).toFloat(),
-                        y2 + (head * sin(angle - 0.75 * Math.PI)).toFloat()
-                    )
-                    cs.stroke()
-                }
-                ShapeKind.RECT -> {
-                    val left = min(x1, x2)
-                    val right = max(x1, x2)
-                    val bottom = min(y1, y2)
-                    val top = max(y1, y2)
-                    cs.addRect(left, bottom, right - left, top - bottom)
-                    cs.stroke()
-                }
-                ShapeKind.CIRCLE -> {
-                    // Ellipse via four cubic Bezier segments (kappa approx).
-                    val cx = (x1 + x2) / 2f
-                    val cy = (y1 + y2) / 2f
-                    val rx = abs(x2 - x1) / 2f
-                    val ry = abs(y2 - y1) / 2f
-                    val kx = rx * 0.5523f
-                    val ky = ry * 0.5523f
-                    cs.moveTo(cx + rx, cy)
-                    cs.curveTo(cx + rx, cy + ky, cx + kx, cy + ry, cx, cy + ry)
-                    cs.curveTo(cx - kx, cy + ry, cx - rx, cy + ky, cx - rx, cy)
-                    cs.curveTo(cx - rx, cy - ky, cx - kx, cy - ry, cx, cy - ry)
-                    cs.curveTo(cx + kx, cy - ry, cx + rx, cy - ky, cx + rx, cy)
-                    cs.closePath()
-                    cs.stroke()
-                }
-                ShapeKind.TRIANGLE -> {
-                    val left = min(x1, x2)
-                    val right = max(x1, x2)
-                    val bottom = min(y1, y2)
-                    val top = max(y1, y2)
-                    cs.moveTo((x1 + x2) / 2f, top)
-                    cs.lineTo(right, bottom)
-                    cs.lineTo(left, bottom)
-                    cs.closePath()
-                    cs.stroke()
-                }
+    override suspend fun readingPosition(docId: String): ReadingPosition? =
+        withContext(Dispatchers.IO) {
+            readingPositionDao.get(docId)?.let {
+                ReadingPosition(documentId = it.documentId, pageIndex = it.pageIndex, zoomScale = it.zoomScale, savedAt = it.savedAt)
             }
-        } catch (t: Throwable) {
-            AppLog.e(TAG, "exportPdf: shape ${s.id} failed", t)
         }
-    }
 
-    private fun drawImage(
-        cs: PDPageContentStream,
-        img: ImageElement,
-        document: PDDocument,
+    // ---------------- PDF metadata ----------------
+
+    override suspend fun pdfFileInfo(docId: String): PdfFileInfo? =
+        withContext(Dispatchers.IO) {
+            val entity = noteDao.getById(docId) ?: return@withContext null
+            if (NoteKind.safeOf(entity.kind) != NoteKind.PDF) return@withContext null
+            val working = workingPdfFile(docId)
+            val original = File(docDir(docId), PDF_FILE)
+            val size = (if (working.exists()) working.length() else original.length())
+            val indexed = PdfTextIndexer.index(working.takeIf { it.exists() } ?: original)
+            PdfFileInfo(
+                documentId = docId,
+                sourceFileName = entity.sourceFileName ?: entity.title,
+                fileSizeBytes = size,
+                pageCount = entity.pageCount,
+                title = indexed?.infoTitle,
+                author = indexed?.infoAuthor,
+                creator = indexed?.infoCreator,
+                producer = indexed?.infoProducer,
+                importedAt = entity.createdAt,
+                lastOpenedAt = entity.lastOpenedAt
+            )
+        }
+
+    // ---------------- PDF page operations ----------------
+
+    override suspend fun deletePdfPages(docId: String, pageIndexes: Set<Int>): PdfPageOpResult =
+        applyPageOp(docId, "delete") { src, tmp -> PdfPageOps.deletePages(src, tmp, pageIndexes) }
+
+    override suspend fun duplicatePdfPage(docId: String, pageIndex: Int): PdfPageOpResult =
+        applyPageOp(docId, "duplicate") { src, tmp -> PdfPageOps.duplicatePage(src, tmp, pageIndex) }
+
+    override suspend fun rotatePdfPage(docId: String, pageIndex: Int): PdfPageOpResult =
+        applyPageOp(docId, "rotate") { src, tmp -> PdfPageOps.rotatePage(src, tmp, pageIndex, 90) }
+
+    override suspend fun movePdfPage(docId: String, fromIndex: Int, toIndex: Int): PdfPageOpResult =
+        applyPageOp(docId, "move") { src, tmp ->
+            val n = readPdfPageCount(src) ?: return@applyPageOp false
+            if (fromIndex !in 0 until n || toIndex !in 0 until n) return@applyPageOp false
+            val order = (0 until n).filter { it != fromIndex }.toMutableList()
+            order.add(toIndex.coerceAtMost(order.size), fromIndex)
+            PdfPageOps.reorderPages(src, tmp, order)
+        }
+
+    override suspend fun extractPdfPagesToDocument(docId: String, pageIndexes: List<Int>, title: String): String? =
+        withContext(Dispatchers.IO) {
+            val source = workingPdfFile(docId).takeIf { it.exists() }
+                ?: File(docDir(docId), PDF_FILE).takeIf { it.exists() }
+                ?: return@withContext null
+            val id = newId()
+            val dir = docDir(id)
+            try {
+                dir.mkdirs()
+                val newPdf = File(dir, PDF_FILE)
+                if (!PdfPageOps.extractPages(source, newPdf, pageIndexes)) {
+                    throw IOException("extract failed")
+                }
+                val pages = readPdfPageDefs(newPdf) ?: throw IOException("cannot read extracted pages")
+                val content = DocumentContent(version = CURRENT_FORMAT_VERSION, pages = pages)
+                if (!DocumentFormat.save(docFile(id), content)) {
+                    throw IOException("could not persist doc.nanote")
+                }
+                val now = System.currentTimeMillis()
+                noteDao.upsert(
+                    NoteEntity(
+                        id = id,
+                        title = title.ifBlank { "Extracted pages" },
+                        kind = NoteKind.PDF.name,
+                        favorite = false,
+                        folderId = null,
+                        createdAt = now,
+                        updatedAt = now,
+                        pageCount = pages.size,
+                        coverColor = com.nanote.core.model.CoverColor.SLATE.name,
+                        icon = com.nanote.core.model.NotebookIcon.NOTES.name,
+                        pageTemplate = com.nanote.core.model.PageTemplate.PLAIN.name,
+                        pageOrientation = com.nanote.core.model.PageOrientation.PORTRAIT.name,
+                        pageSize = com.nanote.core.model.PageSize.A4.name,
+                        lastOpenedAt = 0L,
+                        sortOrder = nextSortOrder(),
+                        fileSizeBytes = newPdf.length(),
+                        sourceFileName = title
+                    )
+                )
+                logActivityInternal(id, ActivityAction.CREATED)
+                appScope.launch { runCatching { reindexPdfText(id) } }
+                id
+            } catch (t: Throwable) {
+                AppLog.e(TAG, "extractPdfPagesToDocument failed", t)
+                dir.deleteRecursively()
+                null
+            }
+        }
+
+    override suspend fun insertPdfPagesFrom(docId: String, uri: Uri, insertAt: Int): PdfPageOpResult =
+        withContext(Dispatchers.IO) {
+            // Copy the picked file into a temp (untrusted input is never
+            // streamed directly into a working document).
+            val other = File(cacheTempDir(), "insert-${newId()}.pdf")
+            try {
+                copyUriToFile(uri, other)
+                val count = readPdfPageCount(other)
+                    ?: return@withContext PdfPageOpResult(false, 0, "not a valid PDF")
+                val res = applyPageOp(docId, "insert") { src, tmp ->
+                    PdfPageOps.insertPagesFrom(src, other, tmp, (0 until count).toList(), insertAt)
+                }
+                res
+            } finally {
+                other.delete()
+            }
+        }
+
+    /**
+     * Core page-op runner: executes the pdf-level op into a temp file,
+     * atomically swaps the working copy, rebuilds the .nanote page list
+     * from the new PDF and remaps element pages. The ORIGINAL imported
+     * file is never touched.
+     */
+    private suspend fun applyPageOp(
         docId: String,
-        pageH: Float
-    ) {
+        name: String,
+        op: suspend (File, File) -> Boolean
+    ): PdfPageOpResult = withContext(Dispatchers.IO) {
+        val entity = noteDao.getById(docId)
+            ?: return@withContext PdfPageOpResult(false, 0, "missing document")
+        if (NoteKind.safeOf(entity.kind) != NoteKind.PDF) {
+            return@withContext PdfPageOpResult(false, 0, "not a PDF document")
+        }
+        val original = File(docDir(docId), PDF_FILE)
+        val working = workingPdfFile(docId)
+        val base = when {
+            working.exists() -> working
+            original.exists() -> original
+            else -> return@withContext PdfPageOpResult(false, 0, "source PDF missing")
+        }
+        val loaded = DocumentFormat.load(docFile(docId))
+            ?: return@withContext PdfPageOpResult(false, 0, "document content unreadable")
+        val oldContent = DocumentMigrations.migrate(loaded.first.snapshot())
+        val oldPages = oldContent.pages
+
+        val tmp = File(cacheTempDir(), "pageop-${newId()}.pdf")
         try {
-            val file = resolveImage(docId, img.path)
-            if (!file.exists()) {
-                AppLog.w(TAG, "exportPdf: image ${img.path} missing")
-                return
+            if (!op(base, tmp)) {
+                return@withContext PdfPageOpResult(false, oldPages.size, "$name failed")
             }
-            val xobj = PDImageXObject.createFromFile(file.absolutePath, document)
-            val w = if (img.w > 0f) img.w else xobj.width.toFloat()
-            val h = if (img.h > 0f) img.h else xobj.height.toFloat()
-            cs.drawImage(xobj, img.x, pageH - img.y - h, w, h)
-        } catch (t: Throwable) {
-            AppLog.e(TAG, "exportPdf: image ${img.id} failed", t)
-        }
-    }
+            val newDefs = readPdfPageDefs(tmp)
+                ?: return@withContext PdfPageOpResult(false, oldPages.size, "result unreadable")
+            val newCount = newDefs.size
 
-    private fun drawText(cs: PDPageContentStream, t: TextElement, pageH: Float) {
-        try {
-            val size = if (t.size > 0f) t.size else 18f
-            if (t.sticky) {
-                cs.setNonStrokingColor(253, 224, 71) // yellow-300 sticky background
-                val w = if (t.width > 0f) t.width else 260f
-                cs.addRect(t.x, pageH - t.y - size * 1.6f, w, size * 1.6f)
-                cs.fill()
+            // Remap element pages: old page -> new page.
+            val remap = buildPageRemap(name, oldPages, newCount)
+            val newContent = remapContentPages(oldContent, newDefs, remap)
+
+            // Atomic swap of the working copy.
+            val workingTarget = File(docDir(docId), EDITED_PDF_FILE)
+            if (workingTarget.exists()) workingTarget.delete()
+            if (!tmp.renameTo(workingTarget)) {
+                tmp.copyTo(workingTarget, overwrite = true)
+                tmp.delete()
             }
-            cs.setNonStrokingColor(red(t.color), green(t.color), blue(t.color))
-            cs.beginText()
-            cs.setFont(PDType1Font.HELVETICA, size)
-            // NOTE: Arabic/RTL shaping is not supported by PDFBox's built-in
-            // Type1 fonts; the text is drawn as a single left-to-right run of
-            // WinAnsi-safe characters. Proper bidi/shaping requires an
-            // Arabic-capable embedded font + layout engine (future work).
-            cs.newLineAtOffset(t.x, pageH - t.y - size)
-            val safe = winAnsiSafe(t.text)
-            if (safe.isNotEmpty()) cs.showText(safe)
-            cs.endText()
-        } catch (e: Throwable) {
-            AppLog.e(TAG, "exportPdf: text ${t.id} failed", e)
+
+            DocumentFormat.save(docFile(docId), newContent)
+            noteDao.updatePageCount(docId, newCount)
+            noteDao.updateTimestamp(docId, System.currentTimeMillis())
+            thumbFile(docId).delete()
+            // Text index follows the new page layout.
+            pdfTextDao.deleteForDoc(docId)
+            appScope.launch { runCatching { reindexPdfText(docId) } }
+            AppLog.i(TAG, "page op '$name' on $docId: ${oldPages.size} -> $newCount pages")
+            PdfPageOpResult(ok = true, newPageCount = newCount)
+        } catch (t: Throwable) {
+            AppLog.e(TAG, "page op '$name' failed for $docId", t)
+            PdfPageOpResult(false, oldPages.size, t.message)
+        } finally {
+            tmp.delete()
         }
     }
 
-    /** Replaces characters Helvetica/WinAnsi cannot encode so showText never throws. */
-    private fun winAnsiSafe(text: String): String {
-        val sb = StringBuilder(text.length)
-        for (ch in text) {
-            when {
-                ch == '\n' || ch == '\r' || ch == '\t' -> sb.append(' ')
-                ch.code in 32..255 -> sb.append(ch)
-                else -> sb.append('?')
+    /** Builds oldPageIndex → newPageIndex for each op type. */
+    private fun buildPageRemap(op: String, oldPages: List<PageDef>, newCount: Int): Map<Int, Int> {
+        val oldCount = oldPages.size
+        return when (op) {
+            "rotate" -> (0 until oldCount).associateWith { it } // indices unchanged
+            else -> {
+                // Rebuild-forward mapping: page i survives when i < newCount.
+                // (delete/duplicate/insert/move remaps are computed from the
+                // new working PDF being indexed identically — annotations
+                // keep their ORIGINAL page index when it still exists.)
+                (0 until oldCount).mapNotNull { old ->
+                    if (old < newCount) old to old else null
+                }.toMap()
             }
         }
-        return sb.toString()
     }
 
-    private fun resetNonStrokingAlpha(cs: PDPageContentStream) {
-        try {
-            val reset = PDExtendedGraphicsState()
-            reset.nonStrokingAlphaConstant = 1f
-            cs.setGraphicsStateParameters(reset)
+    /**
+     * Rebuilds a DocumentContent against new page defs with a page remap.
+     * Elements whose page no longer exists are dropped.
+     */
+    private fun remapContentPages(
+        content: DocumentContent,
+        newDefs: List<PageDef>,
+        remap: Map<Int, Int>
+    ): DocumentContent {
+        fun <T> remapList(list: List<T>, pageOf: (T) -> Int, copy: (T, Int) -> T): List<T> =
+            list.mapNotNull { el ->
+                val newPage = remap[pageOf(el)]
+                if (newPage == null) null else if (newPage == pageOf(el)) el else copy(el, newPage)
+            }
+        return content.copy(
+            pages = newDefs,
+            strokes = remapList(content.strokes, { it.page }) { s, p -> s.copy(page = p) },
+            shapes = remapList(content.shapes, { it.page }) { s, p -> s.copy(page = p) },
+            texts = remapList(content.texts, { it.page }) { t, p -> t.copy(page = p) },
+            images = remapList(content.images, { it.page }) { i, p -> i.copy(page = p) },
+            highlights = remapList(content.highlights, { it.page }) { h, p -> h.copy(page = p) },
+            underlines = remapList(content.underlines, { it.page }) { u, p -> u.copy(page = p) },
+            strikeThroughs = remapList(content.strikeThroughs, { it.page }) { s, p -> s.copy(page = p) }
+        )
+    }
+
+    /** Page defs of a PDF file via pdfium (exact point sizes, rotation-aware). */
+    private fun readPdfPageDefs(file: File): List<PageDef>? {
+        val count = readPdfPageCount(file) ?: return null
+        val core = PdfiumCore(context)
+        val doc = try {
+            openPdf(core, file)
         } catch (t: Throwable) {
-            AppLog.w(TAG, "exportPdf: reset gs failed (${t.message})")
+            return null
+        }
+        return try {
+            (0 until count).map { i ->
+                val w = core.getPageWidthPoint(doc, i).toFloat()
+                val h = core.getPageHeightPoint(doc, i).toFloat()
+                PageDef(
+                    index = i,
+                    width = if (w > 0f) w else DEFAULT_PAGE_W,
+                    height = if (h > 0f) h else DEFAULT_PAGE_H,
+                    pdfPage = i
+                )
+            }
+        } finally {
+            try { core.closeDocument(doc) } catch (_: Throwable) {}
         }
     }
 
-    private fun resetStrokingAlpha(cs: PDPageContentStream) {
+    private fun readPdfPageCount(file: File): Int? = try {
+        val core = PdfiumCore(context)
+        val doc = openPdf(core, file)
         try {
-            val reset = PDExtendedGraphicsState()
-            reset.strokingAlphaConstant = 1f
-            cs.setGraphicsStateParameters(reset)
-        } catch (t: Throwable) {
-            AppLog.w(TAG, "exportPdf: reset gs failed (${t.message})")
+            core.getPageCount(doc)
+        } finally {
+            core.closeDocument(doc)
         }
+    } catch (t: Throwable) {
+        AppLog.w(TAG, "readPdfPageCount failed: ${t.message}")
+        null
+    }
+
+    private fun workingPdfFile(id: String): File = File(docDir(id), EDITED_PDF_FILE)
+
+    private fun cacheTempDir(): File =
+        File(context.cacheDir, "ops").apply { mkdirs() }
+
+    // ---------------- universal export ----------------
+
+    override suspend fun exportDocument(id: String, options: ExportOptions, target: OutputStream): Boolean =
+        withContext(Dispatchers.IO) {
+            when (options.format) {
+                ExportFormat.NANOTE -> exportNanote(id, target)
+                ExportFormat.PNG, ExportFormat.JPEG -> exportAsImage(id, options, target)
+                ExportFormat.PDF -> exportAsPdf(id, options, target)
+            }
+        }
+
+    private suspend fun exportAsImage(id: String, options: ExportOptions, target: OutputStream): Boolean {
+        val entity = noteDao.getById(id) ?: return false
+        // Image formats export ONE page: the first selected page (or the first).
+        val page = options.pages?.minOrNull() ?: 0
+        val scaleByQuality = 2f // raster exports render at 2x for crispness
+        val maxW = (1200 * scaleByQuality).toInt()
+        val bitmap = renderPageBitmap(id, page, maxW) ?: return false
+        return try {
+            val format = if (options.format == ExportFormat.PNG) {
+                Bitmap.CompressFormat.PNG
+            } else {
+                Bitmap.CompressFormat.JPEG
+            }
+            val quality = if (options.format == ExportFormat.PNG) 100 else 92
+            target.use { out -> bitmap.compress(format, quality, out) }
+            true
+        } catch (t: Throwable) {
+            AppLog.e(TAG, "image export failed for $id", t)
+            false
+        } finally {
+            bitmap.recycle()
+        }
+    }
+
+    private suspend fun exportAsPdf(id: String, options: ExportOptions, target: OutputStream): Boolean =
+        withContext(Dispatchers.IO) {
+            val entity = noteDao.getById(id) ?: return@withContext false
+            val kind = NoteKind.safeOf(entity.kind)
+            val loaded = DocumentFormat.load(docFile(id)) ?: return@withContext false
+            val content = DocumentMigrations.migrate(loaded.first.snapshot())
+
+            val working = workingPdfFile(id).takeIf { it.exists() }
+                ?: File(docDir(id), PDF_FILE).takeIf { it.exists() }
+            val isOriginalMode = options.pdfMode == PdfExportMode.ORIGINAL && kind == NoteKind.PDF && working != null
+
+            val tmp = File(cacheTempDir(), "export-${newId()}.pdf")
+            val tmp2 = File(cacheTempDir(), "export-${newId()}.pdf")
+            try {
+                val finalFile: File
+                val expectedPages: Int
+                if (isOriginalMode && working != null) {
+                    // Byte-for-byte copy of the (never-modified) working/original
+                    // document — zero re-encode, no annotations.
+                    working.inputStream().use { input -> input.copyTo(tmp.outputStream()) }
+                    finalFile = tmp
+                    expectedPages = content.pages.size
+                } else {
+                    ensurePdfBoxReady()
+                    var loadedDoc: PDDocument? = null
+                    if (working != null) {
+                        try {
+                            loadedDoc = PDDocument.load(working)
+                        } catch (t: Throwable) {
+                            AppLog.e(TAG, "exportAsPdf: working pdf unreadable, blank-page fallback", t)
+                        }
+                    }
+                    val doc = loadedDoc ?: PDDocument()
+                    try {
+                        if (loadedDoc == null) {
+                            // Plain note (or unreadable PDF): build blank white pages.
+                            for (page in content.pages) {
+                                val w = if (page.width > 0f) page.width else DEFAULT_PAGE_W
+                                val h = if (page.height > 0f) page.height else DEFAULT_PAGE_H
+                                val pdPage = PDPage(PDRectangle(w, h))
+                                doc.addPage(pdPage)
+                                PDPageContentStream(
+                                    doc, pdPage,
+                                    PDPageContentStream.AppendMode.OVERWRITE, true, true
+                                ).use { cs ->
+                                    cs.setNonStrokingColor(255, 255, 255)
+                                    cs.addRect(0f, 0f, w, h)
+                                    cs.fill()
+                                }
+                            }
+                        }
+                        val painter = PdfContentPainter.ImageResolver { rel ->
+                            resolveImage(id, rel).takeIf { it.exists() }
+                        }
+                        content.pages.forEachIndexed { index, def ->
+                            val pdfIndex = if (working != null && def.pdfPage >= 0) def.pdfPage else index
+                            if (pdfIndex < 0 || pdfIndex >= doc.numberOfPages) {
+                                AppLog.w(TAG, "exportAsPdf: page $index out of range, skipped")
+                                return@forEachIndexed
+                            }
+                            val page = doc.getPage(pdfIndex)
+                            if (options.pdfMode == PdfExportMode.WITH_MARKUP_ANNOTATIONS) {
+                                // Ink, shapes, images and text boxes are painted;
+                                // text marks become REAL PDF markup annotations.
+                                PdfContentPainter.paintPage(doc, page, content.copy(
+                                    highlights = emptyList(),
+                                    underlines = emptyList(),
+                                    strikeThroughs = emptyList()
+                                ), index, painter)
+                                PdfMarkupAnnotator.annotatePage(doc, page, content, index)
+                            } else {
+                                PdfContentPainter.paintPage(doc, page, content, index, painter)
+                            }
+                        }
+                        doc.save(tmp)
+                    } finally {
+                        try { doc.close() } catch (_: Throwable) {}
+                    }
+                    finalFile = tmp
+                    expectedPages = content.pages.size
+                }
+
+                // Optional page subset.
+                val subset = options.pages
+                    ?.filter { it >= 0 && it < expectedPages }
+                    ?.sorted()
+                val deliverable = if (!subset.isNullOrEmpty() && subset.size != expectedPages) {
+                    if (!PdfPageOps.extractPages(finalFile, tmp2, subset)) {
+                        return@withContext false
+                    }
+                    tmp2
+                } else {
+                    finalFile
+                }
+
+                // Independent verification BEFORE handing the file over.
+                val verification = PdfVerifier.verify(context, deliverable)
+                if (!verification.ok) {
+                    AppLog.e(TAG, "export verification failed for $id: $verification")
+                    return@withContext false
+                }
+
+                deliverable.inputStream().use { input -> input.copyTo(target) }
+                AppLog.i(TAG, "exported $id (${options.format}/${options.pdfMode}, ${verification.pageCount} pages)")
+                true
+            } catch (t: Throwable) {
+                AppLog.e(TAG, "pdf export failed for $id", t)
+                false
+            } finally {
+                tmp.delete()
+                tmp2.delete()
+            }
+        }
+
+    override suspend fun renderPageBitmap(id: String, pageIndex: Int, maxWidthPx: Int): Bitmap? =
+        withContext(Dispatchers.IO) {
+            val entity = noteDao.getById(id) ?: return@withContext null
+            val loaded = DocumentFormat.load(docFile(id)) ?: return@withContext null
+            val content = DocumentMigrations.migrate(loaded.first.snapshot())
+            val def = content.pages.getOrNull(pageIndex) ?: return@withContext null
+            val kind = NoteKind.safeOf(entity.kind)
+
+            if (kind == NoteKind.PDF) {
+                val pdf = workingPdfFile(id).takeIf { it.exists() }
+                    ?: File(docDir(id), PDF_FILE).takeIf { it.exists() }
+                    ?: return@withContext null
+                renderPdfPage(pdf, pageIndex, def, maxWidthPx)
+            } else {
+                renderNotePage(entity, content, pageIndex, def, maxWidthPx)
+            }
+        }
+
+    private fun renderPdfPage(pdf: File, pageIndex: Int, def: PageDef, maxWidthPx: Int): Bitmap? {
+        return try {
+            val core = PdfiumCore(context)
+            val doc = openPdf(core, pdf)
+            try {
+                if (pageIndex >= core.getPageCount(doc)) return null
+                val pw = if (def.width > 0f) def.width else DEFAULT_PAGE_W
+                val scale = maxWidthPx / pw
+                val w = maxWidthPx.coerceAtLeast(1)
+                val h = (def.height * scale).toInt().coerceAtLeast(1)
+                val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                bitmap.eraseColor(Color.WHITE)
+                core.openPage(doc, pageIndex)
+                core.renderPageBitmap(doc, bitmap, pageIndex, 0, 0, w, h, true)
+                bitmap
+            } finally {
+                core.closeDocument(doc)
+            }
+        } catch (t: Throwable) {
+            AppLog.e(TAG, "renderPdfPage failed", t)
+            null
+        }
+    }
+
+    /** Offscreen painter for note pages: template + ink + shapes + images + text. */
+    private fun renderNotePage(
+        entity: NoteEntity,
+        content: DocumentContent,
+        pageIndex: Int,
+        def: PageDef,
+        maxWidthPx: Int
+    ): Bitmap? {
+        return try {
+            val pw = if (def.width > 0f) def.width else DEFAULT_PAGE_W
+            val ph = if (def.height > 0f) def.height else DEFAULT_PAGE_H
+            val scale = maxWidthPx / pw
+            val w = maxWidthPx.coerceAtLeast(1)
+            val h = (ph * scale).toInt().coerceAtLeast(1)
+            val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(bitmap)
+            canvas.drawColor(Color.WHITE)
+
+            // Template background (mirrors PageTemplatePattern proportions).
+            drawTemplateBackground(canvas, entity.pageTemplate, w, h)
+
+            val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.STROKE
+                strokeCap = Paint.Cap.ROUND
+                strokeJoin = Paint.Join.ROUND
+            }
+            val path = Path()
+
+            // highlights beneath ink
+            val highlightPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+            for (hl in content.highlights.filter { it.page == pageIndex }) {
+                for (r in hl.rects) {
+                    if (r.size < 4) continue
+                    highlightPaint.color = (hl.color and 0xFFFFFF).toInt() or 0xFF000000.toInt()
+                    highlightPaint.alpha = highlighterAlphaOf(hl.opacity)
+                    canvas.drawRect(
+                        r[0] * pw * scale, r[1] * ph * scale,
+                        r[2] * pw * scale, r[3] * ph * scale,
+                        highlightPaint
+                    )
+                }
+            }
+
+            for (stroke in content.strokes.filter { it.page == pageIndex }) {
+                if (stroke.points.isEmpty()) continue
+                paint.color = (stroke.color and 0xFFFFFF).toInt() or 0xFF000000.toInt()
+                paint.strokeWidth = (stroke.width * scale).coerceAtLeast(0.5f)
+                paint.alpha = if (stroke.tool == ToolType.HIGHLIGHTER) {
+                    highlighterAlphaOf(stroke.opacity)
+                } else {
+                    paintAlphaOf(stroke.opacity)
+                }
+                path.reset()
+                path.moveTo(stroke.points[0].x * scale, stroke.points[0].y * scale)
+                if (stroke.points.size == 1) {
+                    path.lineTo(stroke.points[0].x * scale + 0.1f, stroke.points[0].y * scale)
+                } else {
+                    for (i in 1 until stroke.points.size) {
+                        path.lineTo(stroke.points[i].x * scale, stroke.points[i].y * scale)
+                    }
+                }
+                canvas.drawPath(path, paint)
+            }
+
+            for (img in content.images.filter { it.page == pageIndex }) {
+                val file = resolveImage(entity.id, img.path)
+                if (!file.exists()) continue
+                val bmp = BitmapFactory.decodeFile(file.absolutePath) ?: continue
+                val dst = android.graphics.RectF(
+                    img.x * scale, img.y * scale,
+                    (img.x + img.w) * scale, (img.y + img.h) * scale
+                )
+                canvas.drawBitmap(bmp, null, dst, paint)
+                bmp.recycle()
+            }
+
+            val textPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+            for (t in content.texts.filter { it.page == pageIndex }) {
+                textPaint.color = (t.color and 0xFFFFFF).toInt() or 0xFF000000.toInt()
+                textPaint.textSize = t.size * scale
+                var y = t.y * scale + textPaint.textSize
+                for (line in t.text.split('\n')) {
+                    canvas.drawText(line, t.x * scale, y, textPaint)
+                    y += textPaint.textSize * 1.25f
+                }
+            }
+            bitmap
+        } catch (t: Throwable) {
+            AppLog.e(TAG, "renderNotePage failed", t)
+            null
+        }
+    }
+
+    private fun drawTemplateBackground(canvas: Canvas, templateName: String, w: Int, h: Int) {
+        val template = com.nanote.core.model.PageTemplate.safeOf(templateName)
+        val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = 0x1A000000
+            strokeWidth = 1f
+        }
+        when (template) {
+            com.nanote.core.model.PageTemplate.PLAIN -> Unit
+            com.nanote.core.model.PageTemplate.LINED -> {
+                val rows = 9
+                val step = h / (rows + 1)
+                var y = step
+                repeat(rows) {
+                    canvas.drawLine(0f, y.toFloat(), w.toFloat(), y.toFloat(), p)
+                    y += step
+                }
+            }
+            com.nanote.core.model.PageTemplate.GRID -> {
+                val cells = 6
+                val stepX = w / cells
+                val stepY = h / (cells + 3)
+                var x = stepX
+                repeat(cells - 1) {
+                    canvas.drawLine(x.toFloat(), 0f, x.toFloat(), h.toFloat(), p)
+                    x += stepX
+                }
+                var y = stepY
+                while (y < h) {
+                    canvas.drawLine(0f, y.toFloat(), w.toFloat(), y.toFloat(), p)
+                    y += stepY
+                }
+            }
+            com.nanote.core.model.PageTemplate.DOTTED -> {
+                val stepX = w / 7f
+                val stepY = h / 10f
+                var y = stepY
+                while (y < h - 2f) {
+                    var x = stepX
+                    while (x < w - 2f) {
+                        canvas.drawPoint(x, y, p)
+                        x += stepX
+                    }
+                    y += stepY
+                }
+            }
+            com.nanote.core.model.PageTemplate.CORNELL -> {
+                val margin = w * 0.28f
+                val top = h * 0.12f
+                p.color = 0x33000000
+                canvas.drawLine(margin, 0f, margin, h.toFloat(), p)
+                canvas.drawLine(0f, top, w.toFloat(), top, p)
+            }
+        }
+    }
+
+    // ---------------- text index ----------------
+
+    override suspend fun reindexPdfText(docId: String): Int = withContext(Dispatchers.IO) {
+        val entity = noteDao.getById(docId) ?: return@withContext 0
+        if (NoteKind.safeOf(entity.kind) != NoteKind.PDF) return@withContext 0
+        val pdf = workingPdfFile(docId).takeIf { it.exists() }
+            ?: File(docDir(docId), PDF_FILE).takeIf { it.exists() }
+            ?: return@withContext 0
+        val indexed = PdfTextIndexer.index(pdf) ?: return@withContext 0
+        pdfTextDao.deleteForDoc(docId)
+        val rows = indexed.pageTexts.mapIndexed { i, text ->
+            PdfTextPageEntity(id = 0, documentId = docId, pageIndex = i, pdfPage = i, text = text)
+        }
+        if (rows.isNotEmpty()) pdfTextDao.insertAll(rows)
+        AppLog.i(TAG, "text index rebuilt for $docId (${rows.size} pages)")
+        rows.size
+    }
+
+    private suspend fun ensureTextIndex(docId: String) {
+        if (pdfTextDao.countForDoc(docId) > 0) return
+        reindexPdfText(docId)
     }
 
     // ------------------------------------------------------------------

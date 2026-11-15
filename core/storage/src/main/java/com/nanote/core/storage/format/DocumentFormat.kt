@@ -112,7 +112,8 @@ object DocumentFormat {
                 texts = salvageList(obj, "texts"),
                 images = salvageList(obj, "images"),
                 highlights = salvageList(obj, "highlights"),
-                underlines = salvageList(obj, "underlines")
+                underlines = salvageList(obj, "underlines"),
+                strikeThroughs = salvageList(obj, "strikeThroughs")
             )
             val model = DocumentModel(content)
             model.partiallyRecovered = true

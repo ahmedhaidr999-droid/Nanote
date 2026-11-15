@@ -25,10 +25,14 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.outlined.AutoStories
+import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Splitscreen
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -61,7 +65,12 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nanote.feature.editor.R
 import com.nanote.core.graphics.CanvasView
+import com.nanote.core.data.SaveState
+import com.nanote.core.model.ExportOptions
+import com.nanote.feature.editor.menus.ExportSheet
 import com.nanote.feature.editor.menus.MoreMenu
+import com.nanote.feature.editor.menus.PagePanel
+import com.nanote.feature.editor.menus.PdfInfoSheet
 import com.nanote.feature.editor.menus.TextContextMenu
 import com.nanote.feature.editor.menus.ZoomPopover
 import com.nanote.feature.editor.toolbar.NanoteToolbar
@@ -83,6 +92,8 @@ fun EditorScreen(
     val splitEnabled by vm.splitEnabled.collectAsStateWithLifecycle()
     val exporting by vm.exporting.collectAsStateWithLifecycle()
     val title by vm.noteTitle.collectAsStateWithLifecycle()
+    val saveState by vm.saveState.collectAsStateWithLifecycle()
+    val bookmarks by vm.bookmarks.collectAsStateWithLifecycle()
 
     // toast events
     LaunchedEffect(vm) {
@@ -106,14 +117,84 @@ fun EditorScreen(
         return
     }
 
+    var showPagesPanel by remember { mutableStateOf(false) }
+    var showPdfInfo by remember { mutableStateOf(false) }
+    var showExport by remember { mutableStateOf(false) }
+    var pendingExport by remember { mutableStateOf<ExportOptions?>(null) }
+
+    fun exportResult(uri: Uri?) {
+        val options = pendingExport
+        pendingExport = null
+        if (uri != null && options != null) {
+            vm.exportWithOptions(uri, options) { ok ->
+                android.widget.Toast.makeText(
+                    context,
+                    context.getString(if (ok) R.string.export_done else R.string.export_failed),
+                    android.widget.Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+    }
+
+    val exportPdfLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { exportResult(it) }
+    val exportPngLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("image/png")) { exportResult(it) }
+    val exportJpgLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("image/jpeg")) { exportResult(it) }
+    val exportNanoteLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { exportResult(it) }
+
+    val exportTitle = vm.noteTitle.value.ifBlank { "nanote" }
+
+    fun launchExport(options: ExportOptions, fileName: String) {
+        pendingExport = options
+        val name = fileName.ifBlank { "$exportTitle" }
+        when (options.format) {
+            com.nanote.core.model.ExportFormat.PDF -> exportPdfLauncher.launch(name)
+            com.nanote.core.model.ExportFormat.PNG -> exportPngLauncher.launch(name)
+            com.nanote.core.model.ExportFormat.JPEG -> exportJpgLauncher.launch(name)
+            com.nanote.core.model.ExportFormat.NANOTE -> exportNanoteLauncher.launch(name)
+        }
+    }
+
+    val insertPagesPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let { vm.insertPdfPagesFrom(it, pane.currentPage.value + 1) }
+    }
+
+    // ---------------- document-level sheets ----------------
+    if (showPagesPanel) {
+        PagePanel(
+            vm = vm,
+            pane = pane,
+            onDismiss = { showPagesPanel = false },
+            onInsertFromPdf = {
+                showPagesPanel = false
+                insertPagesPicker.launch(arrayOf("application/pdf"))
+            }
+        )
+    }
+    if (showPdfInfo) {
+        PdfInfoSheet(vm = vm, onDismiss = { showPdfInfo = false })
+    }
+    if (showExport) {
+        ExportSheet(
+            vm = vm,
+            pane = pane,
+            onDismiss = { showExport = false },
+            onExportToFile = { options, name -> launchExport(options, name) }
+        )
+    }
+
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
         // ---------------- top bar ----------------
         EditorTopBar(
             title = title.ifBlank { stringResource(R.string.untitled_note) },
             pane = pane,
             splitEnabled = splitEnabled,
+            saveState = saveState,
+            bookmarked = bookmarks.any { it.pageIndex == pane.currentPage.value },
+            showBookmark = pane.isPdf,
             onBack = onBack,
-            onToggleSplit = { vm.toggleSplit() }
+            onToggleSplit = { vm.toggleSplit() },
+            onToggleBookmark = { vm.toggleBookmarkOnCurrentPage() },
+            onOpenPages = { showPagesPanel = true }
         )
         if (exporting) LinearProgressIndicator(Modifier.fillMaxWidth())
 
@@ -127,6 +208,9 @@ fun EditorScreen(
                         paneKey = EditorViewModel.KEY_MAIN,
                         pane = pane,
                         onOpenSettings = onOpenSettings,
+                        onOpenExport = { showExport = true },
+                        onOpenPages = { showPagesPanel = true },
+                        onOpenPdfInfo = { showPdfInfo = true },
                         modifier = Modifier.weight(splitRatio.coerceIn(0.25f, 0.75f)).fillMaxHeight()
                     )
                     // draggable divider
@@ -143,6 +227,9 @@ fun EditorScreen(
                         paneKey = EditorViewModel.KEY_SECOND,
                         pane = secondPane!!,
                         onOpenSettings = onOpenSettings,
+                        onOpenExport = { showExport = true },
+                        onOpenPages = { showPagesPanel = true },
+                        onOpenPdfInfo = { showPdfInfo = true },
                         modifier = Modifier.weight((1f - splitRatio).coerceIn(0.25f, 0.75f)).fillMaxHeight()
                     )
                 }
@@ -152,6 +239,9 @@ fun EditorScreen(
                     paneKey = EditorViewModel.KEY_MAIN,
                     pane = pane,
                     onOpenSettings = onOpenSettings,
+                    onOpenExport = { showExport = true },
+                    onOpenPages = { showPagesPanel = true },
+                    onOpenPdfInfo = { showPdfInfo = true },
                     modifier = Modifier.fillMaxSize()
                 )
             }
@@ -164,8 +254,13 @@ private fun EditorTopBar(
     title: String,
     pane: PaneController,
     splitEnabled: Boolean,
+    saveState: SaveState,
+    bookmarked: Boolean,
+    showBookmark: Boolean,
     onBack: () -> Unit,
-    onToggleSplit: () -> Unit
+    onToggleSplit: () -> Unit,
+    onToggleBookmark: () -> Unit,
+    onOpenPages: () -> Unit
 ) {
     val currentPage by pane.currentPage.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -179,12 +274,28 @@ private fun EditorTopBar(
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
             }
             Column(Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, modifier = Modifier.weight(1f, fill = false))
+                    Spacer(Modifier.width(8.dp))
+                    SaveStateChip(saveState)
+                }
                 Text(
                     stringResource(R.string.page_indicator, currentPage + 1, pane.pageCount),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            }
+            if (showBookmark) {
+                IconButton(onClick = onToggleBookmark) {
+                    Icon(
+                        if (bookmarked) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder,
+                        contentDescription = stringResource(R.string.bookmark_toggle),
+                        tint = if (bookmarked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            IconButton(onClick = onOpenPages) {
+                Icon(Icons.Outlined.AutoStories, contentDescription = stringResource(R.string.pages_panel_title))
             }
             IconButton(onClick = { pane.prevPage() }, enabled = currentPage > 0) {
                 Icon(Icons.Filled.ChevronLeft, contentDescription = stringResource(R.string.zoom_out))
@@ -203,6 +314,40 @@ private fun EditorTopBar(
     }
 }
 
+/** Autosave status chip: Saving… / Saved. Never claims "cloud" anything. */
+@Composable
+private fun SaveStateChip(state: SaveState) {
+    when (state) {
+        is SaveState.Saving -> {
+            Surface(shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.surfaceVariant) {
+                Row(
+                    Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    CircularProgressIndicator(Modifier.size(10.dp), strokeWidth = 1.5.dp)
+                    Text(stringResource(R.string.save_state_saving), style = MaterialTheme.typography.labelSmall)
+                }
+            }
+        }
+        is SaveState.Saved -> {
+            Text(
+                stringResource(R.string.save_state_saved),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        is SaveState.Error -> {
+            Text(
+                stringResource(R.string.save_state_error),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.error
+            )
+        }
+        is SaveState.Idle -> Unit
+    }
+}
+
 private fun Modifier.pointerInputDivider(onDelta: (Float) -> Unit): Modifier =
     this.pointerInput(Unit) {
         detectHorizontalDragGestures { _, dragAmount ->
@@ -216,6 +361,9 @@ private fun EditorPane(
     paneKey: String,
     pane: PaneController,
     onOpenSettings: () -> Unit,
+    onOpenExport: () -> Unit,
+    onOpenPages: () -> Unit,
+    onOpenPdfInfo: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -243,16 +391,6 @@ private fun EditorPane(
         if (ok && uri != null && file != null && file.exists()) {
             vm.insertCameraImage(file, paneKey)
         }
-    }
-    val exportPdfLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri ->
-        uri?.let { vm.exportDocument(it, asPdf = true) { ok ->
-            android.widget.Toast.makeText(context, context.getString(if (ok) R.string.export_done else R.string.export_failed), android.widget.Toast.LENGTH_SHORT).show()
-        } }
-    }
-    val exportNanoteLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
-        uri?.let { vm.exportDocument(it, asPdf = false) { ok ->
-            android.widget.Toast.makeText(context, context.getString(if (ok) R.string.export_done else R.string.export_failed), android.widget.Toast.LENGTH_SHORT).show()
-        } }
     }
 
     Box(modifier.imePadding()) {
@@ -380,8 +518,11 @@ private fun EditorPane(
             MoreMenu(
                 pane = pane,
                 onDismiss = { showMore = false },
-                onExportPdf = { showMore = false; exportPdfLauncher.launch(titleOf(pane, vm)) },
-                onExportNanote = { showMore = false; exportNanoteLauncher.launch(titleOf(pane, vm) + ".nanote") },
+                onExport = { showMore = false; onOpenExport() },
+                onPages = { showMore = false; onOpenPages() },
+                onPdfInfo = if (pane.isPdf) {
+                    { showMore = false; onOpenPdfInfo() }
+                } else null,
                 onSplitToggle = { showMore = false; vm.toggleSplit() },
                 onCustomize = { showMore = false; showCustomize = true },
                 onSettings = { showMore = false; onOpenSettings() }

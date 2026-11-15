@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Legacy cloud backup rules (Android < 12): exclude everything — Nanote is
+  100% offline and documents never leave the device except through explicit
+  user-initiated export or local backup archives.
+-->
+<full-backup-content>
+    <exclude domain="root" path="." />
+</full-backup-content>

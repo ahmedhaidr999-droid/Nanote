@@ -26,10 +26,14 @@ sealed interface SaveState {
 /**
  * Watches one [DocumentModel] and persists it through [DocumentRepository]:
  *
- *  - a debounced save fires 2 s after the last committed change,
+ *  - a debounced save fires [debounceMs] after the last committed change,
  *  - a periodic loop saves every 30 s while the model is dirty,
  *  - [detach] launches one final save for unsaved changes; callers that must
  *    wait for it (process death, screen exit) use [flush].
+ *
+ * Autosave preferences: when [autosaveEnabled] is false, no debounced or
+ * periodic saves run — but the final save on detach/flush ALWAYS runs so
+ * handwriting is never silently discarded.
  *
  * attach/detach are expected to be called from the main dispatcher; the
  * save itself is serialized with [saveMutex] so debounced, periodic and
@@ -37,11 +41,13 @@ sealed interface SaveState {
  */
 class AutosaveManager(
     private val externalScope: CoroutineScope,
-    private val repo: DocumentRepository
+    private val repo: DocumentRepository,
+    private val debounceMs: Long = DEBOUNCE_MS_DEFAULT,
+    private val autosaveEnabled: Boolean = true
 ) {
     companion object {
         private const val TAG = "AutosaveManager"
-        private const val DEBOUNCE_MS = 2_000L
+        const val DEBOUNCE_MS_DEFAULT = 2_000L
         private const val PERIOD_MS = 30_000L
     }
 
@@ -77,12 +83,16 @@ class AutosaveManager(
 
         revisionJob = externalScope.launch {
             // drop(1): revision 0 is the initial value, not a change.
-            model.revision.drop(1).collect { scheduleDebouncedSave() }
+            if (autosaveEnabled) {
+                model.revision.drop(1).collect { scheduleDebouncedSave() }
+            }
         }
-        periodicJob = externalScope.launch {
-            while (isActive) {
-                delay(PERIOD_MS)
-                if (model.dirty) saveNow()
+        if (autosaveEnabled) {
+            periodicJob = externalScope.launch {
+                while (isActive) {
+                    delay(PERIOD_MS)
+                    if (model.dirty) saveNow()
+                }
             }
         }
     }
@@ -137,11 +147,11 @@ class AutosaveManager(
     // internals
     // ------------------------------------------------------------------
 
-    /** Restarts the debounce timer; the save fires DEBOUNCE_MS after the last change. */
+    /** Restarts the debounce timer; the save fires debounceMs after the last change. */
     private fun scheduleDebouncedSave() {
         debounceJob?.cancel()
         debounceJob = externalScope.launch {
-            delay(DEBOUNCE_MS)
+            delay(debounceMs)
             saveNow()
         }
     }

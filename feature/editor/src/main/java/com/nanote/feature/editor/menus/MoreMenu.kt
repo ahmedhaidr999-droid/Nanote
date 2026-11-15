@@ -15,7 +15,10 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.AutoStories
 import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.IosShare
 import androidx.compose.material.icons.outlined.PictureAsPdf
 import androidx.compose.material.icons.outlined.Redo
 import androidx.compose.material.icons.outlined.Settings
@@ -50,16 +53,18 @@ import com.nanote.core.design.theme.Dimens
 import kotlin.math.roundToInt
 
 /**
- * "More" overflow menu: quick page navigation (slider + add page),
- * document export, split-screen toggle, toolbar customization, settings
- * and an undo/redo row. Focusable popup anchored at the top-end corner.
+ * "More" overflow menu: quick page navigation (slider + add page), the
+ * pages panel, the export sheet, PDF details, split-screen toggle, toolbar
+ * customization, settings and an undo/redo row. Focusable popup anchored
+ * at the top-end corner.
  */
 @Composable
 fun MoreMenu(
     pane: PaneController,
     onDismiss: () -> Unit,
-    onExportPdf: () -> Unit,
-    onExportNanote: () -> Unit,
+    onExport: () -> Unit,
+    onPages: () -> Unit,
+    onPdfInfo: (() -> Unit)?,
     onSplitToggle: () -> Unit,
     onCustomize: () -> Unit,
     onSettings: () -> Unit
@@ -113,11 +118,16 @@ fun MoreMenu(
                     pane.addPage()
                     onDismiss()
                 }
-                MenuRow(Icons.Outlined.PictureAsPdf, stringResource(R.string.export_pdf)) {
-                    onExportPdf()
+                MenuRow(Icons.Outlined.AutoStories, stringResource(R.string.pages_panel_title)) {
+                    onPages()
                 }
-                MenuRow(Icons.Outlined.Description, stringResource(R.string.export_nanote)) {
-                    onExportNanote()
+                MenuRow(Icons.Outlined.IosShare, stringResource(R.string.export_sheet_title)) {
+                    onExport()
+                }
+                if (onPdfInfo != null) {
+                    MenuRow(Icons.Outlined.Info, stringResource(R.string.pdf_info_title)) {
+                        onPdfInfo()
+                    }
                 }
                 MenuRow(Icons.Outlined.Splitscreen, stringResource(R.string.split_screen)) {
                     onSplitToggle()

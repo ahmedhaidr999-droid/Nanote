@@ -35,4 +35,39 @@
     <string name="size_kb">%1$.1f KB</string>
     <string name="size_mb">%1$.1f MB</string>
     <string name="size_gb">%1$.1f GB</string>
+
+    <!-- Part 3: export, PDF & autosave, backup & restore -->
+    <string name="settings_export">Export &amp; sharing</string>
+    <string name="default_export_format">Default export format</string>
+    <string name="export_format_pdf">PDF</string>
+    <string name="export_format_png">PNG</string>
+    <string name="export_format_jpeg">JPEG</string>
+    <string name="export_format_nanote">.nanote</string>
+    <string name="default_pdf_export_mode">Default PDF annotations mode</string>
+    <string name="export_mode_flattened">Flattened</string>
+    <string name="export_mode_markup">Keep text selectable</string>
+    <string name="export_mode_original">Original only</string>
+    <string name="settings_pdf_autosave">PDF &amp; autosave</string>
+    <string name="render_quality">PDF render quality</string>
+    <string name="quality_low">Low</string>
+    <string name="quality_medium">Balanced</string>
+    <string name="quality_high">High</string>
+    <string name="autosave_enabled">Autosave</string>
+    <string name="autosave_enabled_desc">Saves automatically while you write. A final save always runs on exit.</string>
+    <string name="autosave_delay">Save %1$d s after the last change</string>
+    <string name="settings_backup">Backup &amp; restore</string>
+    <string name="backup_desc">Create a local archive of all documents, or restore from one. Works fully offline.</string>
+    <string name="backup_all">Back up all documents</string>
+    <string name="restore_backup">Restore from backup</string>
+    <string name="backup_done">Backup created</string>
+    <string name="backup_failed">Backup failed</string>
+    <string name="backup_invalid">This file is not a valid Nanote backup</string>
+    <string name="backup_working">Working…</string>
+    <string name="restore_preview_title">Restore this backup?</string>
+    <string name="restore_preview_summary">%1$d notebooks and %2$d PDFs will be added to your library.</string>
+    <string name="restore_preview_more">…and %1$d more</string>
+    <string name="restore_preview_note">Restored documents are added as copies — nothing existing is overwritten or deleted.</string>
+    <string name="restore_done_title">Restore finished</string>
+    <string name="restore_done_summary">%1$d notebooks and %2$d PDFs restored.</string>
+    <string name="restore_renamed">%1$d documents were renamed to avoid duplicates.</string>
 </resources>

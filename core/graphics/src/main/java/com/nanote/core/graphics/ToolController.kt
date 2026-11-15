@@ -10,6 +10,7 @@ import com.nanote.core.model.ImageElement
 import com.nanote.core.model.ShapeElement
 import com.nanote.core.model.Stroke
 import com.nanote.core.model.StrokePoint
+import com.nanote.core.model.StrikeThroughAnnotation
 import com.nanote.core.model.TextElement
 import com.nanote.core.model.ToolConfig
 import com.nanote.core.model.ToolType
@@ -385,6 +386,7 @@ class ToolController(
                         when (it) {
                             is SelectedElement.SelHighlight -> if (it.ann !in erasedHighlights) erasedHighlights.add(it.ann)
                             is SelectedElement.SelUnderline -> if (it.ann !in erasedUnderlines) erasedUnderlines.add(it.ann)
+                            is SelectedElement.SelStrikeThrough -> if (it.ann !in erasedStrikeThroughs) erasedStrikeThroughs.add(it.ann)
                             else -> {}
                         }
                     }
@@ -398,6 +400,7 @@ class ToolController(
     private val erasedImages = ArrayList<ImageElement>()
     private val erasedHighlights = ArrayList<HighlightAnnotation>()
     private val erasedUnderlines = ArrayList<UnderlineAnnotation>()
+    private val erasedStrikeThroughs = ArrayList<StrikeThroughAnnotation>()
 
     private fun finishEraser() {
         when (toolConfig.eraserMode) {
@@ -410,11 +413,11 @@ class ToolController(
                 if (erasedStrokes.isNotEmpty()) listener.commit(doc.removeStrokesCmd(ArrayList(erasedStrokes)))
                 if (erasedTexts.isNotEmpty()) listener.commit(doc.removeTextCmd(ArrayList(erasedTexts)))
                 if (erasedImages.isNotEmpty()) listener.commit(doc.removeImagesCmd(ArrayList(erasedImages)))
-                if (erasedHighlights.isNotEmpty() || erasedUnderlines.isNotEmpty()) {
-                    listener.commit(doc.removeAnnotationsCmd(ArrayList(erasedHighlights), ArrayList(erasedUnderlines)))
+                if (erasedHighlights.isNotEmpty() || erasedUnderlines.isNotEmpty() || erasedStrikeThroughs.isNotEmpty()) {
+                    listener.commit(doc.removeAnnotationsCmd(ArrayList(erasedHighlights), ArrayList(erasedUnderlines), ArrayList(erasedStrikeThroughs)))
                 }
                 erasedTexts.clear(); erasedImages.clear()
-                erasedHighlights.clear(); erasedUnderlines.clear()
+                erasedHighlights.clear(); erasedUnderlines.clear(); erasedStrikeThroughs.clear()
             }
             EraserMode.PIXEL -> {
                 val r = eraserRadiusWorld()
@@ -556,6 +559,7 @@ class ToolController(
                 is SelectedElement.SelShape -> selectedIds.add(it.shape.id)
                 is SelectedElement.SelHighlight -> selectedIds.add(it.ann.id)
                 is SelectedElement.SelUnderline -> selectedIds.add(it.ann.id)
+                is SelectedElement.SelStrikeThrough -> selectedIds.add(it.ann.id)
             }
         }
     }
@@ -653,6 +657,7 @@ class ToolController(
         val shapes = ArrayList<ShapeElement>()
         val highs = ArrayList<HighlightAnnotation>()
         val unders = ArrayList<UnderlineAnnotation>()
+        val strikes = ArrayList<StrikeThroughAnnotation>()
         for (it in objectSelection.items) {
             when (it) {
                 is SelectedElement.SelStroke -> strokes.add(it.stroke)
@@ -661,13 +666,16 @@ class ToolController(
                 is SelectedElement.SelShape -> shapes.add(it.shape)
                 is SelectedElement.SelHighlight -> highs.add(it.ann)
                 is SelectedElement.SelUnderline -> unders.add(it.ann)
+                is SelectedElement.SelStrikeThrough -> strikes.add(it.ann)
             }
         }
         if (strokes.isNotEmpty()) listener.commit(doc.removeStrokesCmd(strokes))
         if (texts.isNotEmpty()) listener.commit(doc.removeTextCmd(texts))
         if (images.isNotEmpty()) listener.commit(doc.removeImagesCmd(images))
         if (shapes.isNotEmpty()) listener.commit(doc.removeShapesCmd(shapes))
-        if (highs.isNotEmpty() || unders.isNotEmpty()) listener.commit(doc.removeAnnotationsCmd(highs, unders))
+        if (highs.isNotEmpty() || unders.isNotEmpty() || strikes.isNotEmpty()) {
+            listener.commit(doc.removeAnnotationsCmd(highs, unders, strikes))
+        }
         objectSelection.clear()
         syncSelectedIds()
         listener.onObjectMenuVisibility(false)
@@ -829,6 +837,21 @@ class ToolController(
         return true
     }
 
+    fun strikeThroughSelection(): Boolean {
+        val t = textSelection
+        if (!t.isActive) return false
+        val rects = t.selectionRects().map { r ->
+            val pw = state.layout.pageWidth(t.pageIndex)
+            val ph = state.layout.pageHeight(t.pageIndex)
+            listOf(r[0] / pw, r[1] / ph, r[2] / pw, r[3] / ph)
+        }
+        if (rects.isEmpty()) return false
+        val ann = StrikeThroughAnnotation(newId(), t.pageIndex, 0xFFEF4444, 100, rects)
+        listener.commit(doc.addStrikeThroughCmd(ann))
+        clearTextSelection()
+        return true
+    }
+
     // =====================================================================
     // Text insertion
     // =====================================================================
@@ -889,6 +912,18 @@ class ToolController(
                 val x0 = left + r[0] * pw; val y0 = top + r[1] * ph
                 val x1 = left + r[2] * pw; val y1 = top + r[3] * ph
                 if (wx in x0..x1 && wy in y0 - 8..y1 + 8) return SelectedElement.SelUnderline(u)
+            }
+        }
+        for (s in doc.strikeThroughs) {
+            val page = s.page
+            val left = layout.pageLeft(page)
+            val top = layout.pageTop(page)
+            val pw = layout.pageWidth(page)
+            val ph = layout.pageHeight(page)
+            for (r in s.rects) {
+                val x0 = left + r[0] * pw; val y0 = top + r[1] * ph
+                val x1 = left + r[2] * pw; val y1 = top + r[3] * ph
+                if (wx in x0..x1 && wy in y0 - 8..y1 + 8) return SelectedElement.SelStrikeThrough(s)
             }
         }
         return null

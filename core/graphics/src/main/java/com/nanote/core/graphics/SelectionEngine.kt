@@ -6,6 +6,7 @@ import com.nanote.core.model.Stroke
 import com.nanote.core.model.TextElement
 import com.nanote.core.model.ImageElement
 import com.nanote.core.model.ShapeElement
+import com.nanote.core.model.StrikeThroughAnnotation
 import com.nanote.core.model.UnderlineAnnotation
 import com.nanote.core.pdf.PageText
 import com.nanote.core.pdf.PdfWord
@@ -139,6 +140,7 @@ sealed class SelectedElement {
     data class SelShape(val shape: ShapeElement) : SelectedElement()
     data class SelHighlight(val ann: HighlightAnnotation) : SelectedElement()
     data class SelUnderline(val ann: UnderlineAnnotation) : SelectedElement()
+    data class SelStrikeThrough(val ann: StrikeThroughAnnotation) : SelectedElement()
 }
 
 class ObjectSelection {
@@ -186,6 +188,11 @@ class ObjectSelection {
                     )
                 }
                 is SelectedElement.SelUnderline -> {
+                    val page = doc.pages.getOrNull(it.ann.page) ?: continue
+                    val r = it.ann.rects.firstOrNull() ?: continue
+                    floatArrayOf(r[0] * page.width, r[1] * page.height, r[2] * page.width, r[3] * page.height)
+                }
+                is SelectedElement.SelStrikeThrough -> {
                     val page = doc.pages.getOrNull(it.ann.page) ?: continue
                     val r = it.ann.rects.firstOrNull() ?: continue
                     floatArrayOf(r[0] * page.width, r[1] * page.height, r[2] * page.width, r[3] * page.height)

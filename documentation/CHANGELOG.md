@@ -2,6 +2,68 @@
 
 All notable changes to Nanote are documented here.
 
+## [1.2.0] — Part 3: PDF engine, local storage, search & export
+
+### PDF engine
+- Five separated responsibilities (render / extract / annotate / page ops /
+  export) across pdfium-android and pdfbox-android; no invented APIs.
+- Page operations on a working copy (`edited.pdf`) — the imported
+  `original.pdf` is never modified: delete, duplicate, reorder, rotate,
+  extract-to-new-document (split), insert-pages-from-PDF, merge.
+- Strikethrough text-mark annotation (model, renderer, selection menu,
+  eraser/selection integration, PDF export).
+- Export modes: flattened, keep-text-selectable (real PDF markup
+  annotations), original-only; optional page subsets; every export is
+  verified by reopening with pdfium (independent renderer).
+- PDF details sheet (file name/size/pages + document info when present).
+- Reading positions (page + zoom) persisted and restored per document.
+- PDF bookmarks: toggle on the current page, listing, jump, delete.
+
+### Local storage & backup
+- Room schema **v2 → v3 migration** (file metadata columns; new tables:
+  tags, note_tags, pdf_text_pages, pdf_bookmarks, reading_positions,
+  search_history) — unit-tested, non-destructive.
+- Local full-text search index over extracted PDF text (built at import in
+  the background, rebuilt after page operations; no OCR claimed).
+- Document tagging with usage counts.
+- Versioned offline `.nanote-backup` ZIP format (manifest + index rows +
+  files) with future-version rejection; full backup and previewed restore
+  that never overwrites existing data ("(Restored)" rename on collisions).
+- Autosave preferences (enable + debounce) with an editor save-status
+  chip; the final save on exit always runs.
+- Android cloud auto-backup disabled (`allowBackup=false` + data-extraction
+  exclusion rules) — documents never leave the device implicitly.
+
+### Search
+- Grouped results on the home screen: documents, folders, tags and
+  matches inside PDF text (page + snippet); tapping a hit opens the
+  document. Recent searches as chips with per-entry removal and clear-all.
+
+### Export & sharing
+- Export sheet: PDF / PNG / JPEG / .nanote with page selection.
+- Android Sharesheet via FileProvider and Android Print Framework.
+- Offscreen notebook page painter (template + ink + images + text) for
+  raster exports.
+
+### Tests
+- `PdfPageOpsTest` (Robolectric): every page operation verified by
+  reopening the produced PDF and reading back per-page text.
+- `BackupFormatTest` (JVM): round-trip, future-version rejection, partial
+  archives, dated default file names.
+- `Part3ModelTest`: strikethrough serialization round-trip + commands.
+- `MigrationTest`: v2→v3 preservation + all new tables.
+- `DocumentRepositoryImplTest`: tags, search history, bookmarks, reading
+  positions.
+
+### Documentation
+- New: `PDF_ENGINE.md`, `STORAGE_AND_BACKUP.md`; updated FEATURES.md,
+  ROADMAP.md, README.md.
+
+### Preserved
+- All Part 1 library/folder/notebook management and the complete
+  handwriting editor (ink, PDF annotation, split screen, autosave,
+  customizable toolbar).
+
 ## [1.1.0] — Part 1 Foundation
 
 ### Architecture

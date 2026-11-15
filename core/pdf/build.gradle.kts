@@ -17,10 +17,16 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+        }
+    }
 }
 
 dependencies {
     implementation(project(":core:common"))
+    implementation(project(":core:model"))
     // androidx.core provides the notification compat styles that pdfium's
     // resources reference (single-module v1.0.0 had it transitively).
     implementation(libs.androidx.core.ktx)
@@ -32,4 +38,9 @@ dependencies {
     }
     implementation(libs.pdfbox.android)
     implementation(libs.kotlinx.coroutines.android)
+
+    testImplementation(libs.junit4)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.core.ktx)
+    testImplementation(libs.kotlinx.coroutines.test)
 }

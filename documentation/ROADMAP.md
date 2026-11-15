@@ -1,6 +1,6 @@
 # Nanote — Roadmap
 
-## Part 1 — Foundation, architecture & UI (this release, v1.1.0) ✅
+## Part 1 — Foundation, architecture & UI (v1.1.0) ✅
 
 * Repository audit of the v1.0.0 single-module app
 * 15-module Gradle architecture (core / feature layering, version catalog, wrapper)
@@ -12,7 +12,13 @@
 * CI: build + unit tests + lint + signed release
 * Documentation set (README, ARCHITECTURE, TECH_STACK, FEATURES, ROADMAP, CHANGELOG)
 
-## Part 2 — Handwriting engine (next)
+## Part 2 — Handwriting engine (absorbed into the Part 3 release)
+
+The v1.0.0 engine was preserved and carried forward (ink with pressure,
+eraser with pixel-split, lasso, shapes, text, images, split screen,
+undo/redo, autosave). Part 3 added strikethrough text marks, page
+operations, bookmarks and reading positions on top of it; the deeper
+rework items below remain open.
 
 * Upgrade `:core:graphics` in place: structured stroke model, pressure
   curves, stroke smoothing, low-latency input (MotionEvent batching /
@@ -26,22 +32,31 @@
   `SettingsStore` (SharedPreferences) into DataStore
 * Editor polish: rulers, zoom gestures refinement, shape recognition
 
-## Part 3 — Organization & productivity
+## Part 3 — PDF engine, storage, search & export (this release, v1.2.0) ✅
 
-* Trash with restore (soft-delete instead of hard delete)
-* Tags & smart lists, saved filters
-* Custom notebook covers (images) and template editor
-* Backup/restore to local file (user-initiated export/import of everything)
-* Advanced search (inside document content)
-* Phone layout refinements (adaptive detail panes)
+* PDF engine with separated responsibilities (pdfium render + pdfbox
+  write/extract) and verified exports
+* Page operations (delete/duplicate/reorder/rotate/extract/insert/merge)
+  on a working copy — imported originals never modified
+* Strikethrough marks, bookmarks, reading positions, PDF details sheet
+* Room v3 (tags, PDF text index, bookmarks, positions, search history)
+* Local search across titles, folders, tags and PDF text + history
+* Export sheet (PDF modes / PNG / JPEG / .nanote, page subsets) with
+  Sharesheet + Print Framework
+* Versioned offline backup & previewed restore
+* Autosave preferences + save-status chip
+* Still open from the original plan: trash/soft-delete, smart lists,
+  custom covers, phone detail panes
 
-## Part 4 — PDF suite
+## Part 4 — Final integration & QA
 
-* PDF import pipeline upgrade (page insertion into notebooks, page ranges)
-* PDF export options (page selection, backgrounds)
-* PDF forms & links support where pdfium allows
-* Annotation summary sidebar
-* Performance: render-farm profiling on low-RAM tablets
+* Full-device QA pass on a real stylus tablet (import/annotate/export/
+  backup/restore end-to-end)
+* Remaining PDF items: forms & links support where the engines allow,
+  annotation summary sidebar
+* Performance profiling on low-RAM tablets
+* Handwriting engine polish backlog from Part 2 (rulers, shape
+  recognition, gesture reordering)
 
 ## Continuous
 

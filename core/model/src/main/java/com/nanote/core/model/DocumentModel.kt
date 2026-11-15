@@ -28,6 +28,7 @@ class DocumentModel(initial: DocumentContent = DocumentContent(version = CURRENT
     val images = initial.images.toMutableList()
     val highlights = initial.highlights.toMutableList()
     val underlines = initial.underlines.toMutableList()
+    val strikeThroughs = initial.strikeThroughs.toMutableList()
 
     private val undoStack = ArrayDeque<Command>()
     private val redoStack = ArrayDeque<Command>()
@@ -54,6 +55,7 @@ class DocumentModel(initial: DocumentContent = DocumentContent(version = CURRENT
     fun imagesOn(page: Int): List<ImageElement> = images.filter { it.page == page }
     fun highlightsOn(page: Int): List<HighlightAnnotation> = highlights.filter { it.page == page }
     fun underlinesOn(page: Int): List<UnderlineAnnotation> = underlines.filter { it.page == page }
+    fun strikeThroughsOn(page: Int): List<StrikeThroughAnnotation> = strikeThroughs.filter { it.page == page }
 
     fun pageCount(): Int = pages.size
 
@@ -65,7 +67,8 @@ class DocumentModel(initial: DocumentContent = DocumentContent(version = CURRENT
         texts = texts.toList(),
         images = images.toList(),
         highlights = highlights.toList(),
-        underlines = underlines.toList()
+        underlines = underlines.toList(),
+        strikeThroughs = strikeThroughs.toList()
     )
 
     val canUndo: Boolean get() = undoStack.isNotEmpty()
@@ -298,12 +301,21 @@ class DocumentModel(initial: DocumentContent = DocumentContent(version = CURRENT
         override fun revert() { underlines.remove(u) }
     }
 
-    fun removeAnnotationsCmd(h: List<HighlightAnnotation>, u: List<UnderlineAnnotation>): Command =
+    fun addStrikeThroughCmd(s: StrikeThroughAnnotation): Command = object : Command {
+        override fun execute() { strikeThroughs.add(s) }
+        override fun revert() { strikeThroughs.remove(s) }
+    }
+
+    fun removeAnnotationsCmd(
+        h: List<HighlightAnnotation>,
+        u: List<UnderlineAnnotation>,
+        s: List<StrikeThroughAnnotation> = emptyList()
+    ): Command =
         object : Command {
             override fun execute() {
-                highlights.removeAll(h.toSet()); underlines.removeAll(u.toSet())
+                highlights.removeAll(h.toSet()); underlines.removeAll(u.toSet()); strikeThroughs.removeAll(s.toSet())
             }
-            override fun revert() { highlights.addAll(h); underlines.addAll(u) }
+            override fun revert() { highlights.addAll(h); underlines.addAll(u); strikeThroughs.addAll(s) }
         }
 
     fun addPageCmd(): Command {

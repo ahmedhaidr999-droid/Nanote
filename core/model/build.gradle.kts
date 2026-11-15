@@ -18,6 +18,12 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+    testOptions {
+        unitTests {
+            // DocumentModel logs through android.util.Log on undo/redo.
+            isReturnDefaultValues = true
+        }
+    }
 }
 
 dependencies {

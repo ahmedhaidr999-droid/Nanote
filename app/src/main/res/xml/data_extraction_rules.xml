@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Cloud backup rules (Android 12+): Nanote documents are private on-device
+  data and must never be transmitted to any remote service — automatic
+  backups are disabled entirely. Users create their own local archives
+  through Settings → Backup & restore (.nanote-backup files).
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" path="." />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" path="." />
+    </device-transfer>
+</data-extraction-rules>

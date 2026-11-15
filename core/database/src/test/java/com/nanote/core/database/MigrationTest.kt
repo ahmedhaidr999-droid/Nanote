@@ -92,9 +92,10 @@ class MigrationTest {
         context.getDatabasePath(dbName).delete()
         createV1Database(dbName)
 
-        // --- open with Room; the migration runs and the schema is validated.
+        // --- open with Room; the full migration chain (1→2→3) runs and the
+        // schema is validated against the current entities.
         db = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
-            .addMigrations(AppDatabase.MIGRATION_1_2)
+            .addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3)
             .allowMainThreadQueries()
             .build()
 
@@ -125,5 +126,124 @@ class MigrationTest {
 
         db.noteDao().deleteByIds(setOf("n1"))
         assertEquals(0, db.recentActivityDao().observeRecent(10).first().size)
+    }
+
+    // ------------------------------------------------------------------
+    // v2 → v3 (Part 3)
+    // ------------------------------------------------------------------
+
+    /** Creates a v2 (Part 1) shaped database file through the framework factory. */
+    private fun createV2Database(name: String) {
+        val callback = object : SupportSQLiteOpenHelper.Callback(2) {
+            override fun onCreate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """CREATE TABLE IF NOT EXISTS notes (
+                        id TEXT NOT NULL PRIMARY KEY,
+                        title TEXT NOT NULL,
+                        kind TEXT NOT NULL,
+                        favorite INTEGER NOT NULL,
+                        folderId TEXT,
+                        createdAt INTEGER NOT NULL,
+                        updatedAt INTEGER NOT NULL,
+                        pageCount INTEGER NOT NULL,
+                        coverColor TEXT NOT NULL DEFAULT 'BLUE',
+                        icon TEXT NOT NULL DEFAULT 'NOTEBOOK',
+                        pageTemplate TEXT NOT NULL DEFAULT 'LINED',
+                        pageOrientation TEXT NOT NULL DEFAULT 'PORTRAIT',
+                        pageSize TEXT NOT NULL DEFAULT 'A4',
+                        lastOpenedAt INTEGER NOT NULL DEFAULT 0,
+                        sortOrder INTEGER NOT NULL DEFAULT 0)"""
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_notes_folderId ON notes(folderId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_notes_updatedAt ON notes(updatedAt)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_notes_lastOpenedAt ON notes(lastOpenedAt)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_notes_sortOrder ON notes(sortOrder)")
+                db.execSQL(
+                    """CREATE TABLE IF NOT EXISTS folders (
+                        id TEXT NOT NULL PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        sortOrder INTEGER NOT NULL,
+                        parentId TEXT,
+                        createdAt INTEGER NOT NULL DEFAULT 0,
+                        updatedAt INTEGER NOT NULL DEFAULT 0)"""
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_folders_parentId ON folders(parentId)")
+                db.execSQL(
+                    """CREATE TABLE IF NOT EXISTS recent_activity (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        documentId TEXT NOT NULL,
+                        activityAction TEXT NOT NULL,
+                        occurredAt INTEGER NOT NULL,
+                        FOREIGN KEY(documentId) REFERENCES notes(id) ON UPDATE NO ACTION ON DELETE CASCADE)"""
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_recent_activity_documentId ON recent_activity(documentId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_recent_activity_occurredAt ON recent_activity(occurredAt)")
+                db.execSQL("INSERT INTO notes VALUES ('p1', 'Lecture 1', 'PDF', 1, NULL, 100, 200, 12, 'SLATE', 'NOTES', 'PLAIN', 'PORTRAIT', 'A4', 150, 0)")
+                db.execSQL("INSERT INTO notes VALUES ('p2', 'Journal', 'NOTE', 0, NULL, 101, 201, 4, 'BLUE', 'JOURNAL', 'LINED', 'PORTRAIT', 'A5', 151, 1)")
+                db.execSQL("INSERT INTO folders VALUES ('f9', 'Uni', 0, NULL, 5, 6)")
+            }
+
+            override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+        }
+        val configuration = SupportSQLiteOpenHelper.Configuration.builder(context)
+            .name(name)
+            .callback(callback)
+            .build()
+        val helper = FrameworkSQLiteOpenHelperFactory().create(configuration)
+        @Suppress("UNUSED_EXPRESSION")
+        helper.writableDatabase
+        helper.close()
+    }
+
+    @Test
+    fun migrate2To3_preservesRowsAndAddsTables() = runBlocking {
+        val dbName = "migration-test-v3.db"
+        context.getDatabasePath(dbName).parentFile?.mkdirs()
+        context.getDatabasePath(dbName).delete()
+        createV2Database(dbName)
+
+        db = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
+            .addMigrations(AppDatabase.MIGRATION_2_3)
+            .allowMainThreadQueries()
+            .build()
+
+        // --- existing rows survive with sensible defaults for new columns.
+        val p1 = db.noteDao().getById("p1")
+        assertNotNull(p1)
+        assertEquals("Lecture 1", p1!!.title)
+        assertEquals(0L, p1.fileSizeBytes)
+        assertNull(p1.sourceFileName)
+
+        // --- tags accept assignments and cascade.
+        db.tagDao().upsert(TagEntity(name = "study", color = 0xFF2563EB, createdAt = 1))
+        db.tagDao().setNoteTags("p1", listOf("study"))
+        assertEquals(listOf("study"), db.tagDao().tagsForNote("p1"))
+        assertEquals(listOf("p1"), db.tagDao().notesWithTag("study"))
+        db.noteDao().deleteByIds(setOf("p1"))
+        assertEquals(0, db.tagDao().notesWithTag("study").size)
+
+        // --- the PDF text index accepts rows and is searchable.
+        db.pdfTextDao().insertAll(
+            listOf(
+                PdfTextPageEntity(id = 0, documentId = "p2", pageIndex = 0, pdfPage = -1, text = "hello world"),
+                PdfTextPageEntity(id = 0, documentId = "p2", pageIndex = 1, pdfPage = -1, text = "second page")
+            )
+        )
+        assertEquals(2, db.pdfTextDao().countForDoc("p2"))
+        assertEquals(1, db.pdfTextDao().search("second", 10).size)
+
+        // --- bookmarks + reading positions round-trip.
+        db.bookmarkDao().upsert(
+            PdfBookmarkEntity(id = "b1", documentId = "p2", pageIndex = 1, pdfPage = 1, title = "Ch 2", createdAt = 9)
+        )
+        assertEquals(1, db.bookmarkDao().getForDoc("p2").size)
+        db.readingPositionDao().upsert(
+            ReadingPositionEntity(documentId = "p2", pageIndex = 1, zoomScale = 1.5f, savedAt = 10)
+        )
+        assertEquals(1.5f, db.readingPositionDao().get("p2")!!.zoomScale)
+
+        // --- search history round-trips.
+        db.searchHistoryDao().upsert(SearchHistoryEntity(query = "lecture", searchedAt = 11))
+        assertEquals(1, db.searchHistoryDao().getRecent(5).size)
     }
 }
