@@ -171,16 +171,15 @@ object PdfPageOps {
             val n = out.numberOfPages
             val at = insertAt.coerceIn(0, n)
             if (at < n) {
-                // Pages were appended at the end; move them before the anchor.
+                // Pages were appended at the end; move them before the anchor
+                // page. Every insertion goes before the SAME anchor so the
+                // group keeps its order: [.. anchor, ..] -> [.. p1 p2 .. anchor, ..]
                 val anchor = out.getPage(at)
-                val added = (n - otherPageIndexes.size) until n
-                val moving = added.map { out.getPage(it) }
-                // Detach then re-insert before the anchor.
+                val addedCount = otherPageIndexes.size
+                val moving = ((n - addedCount) until n).map { out.getPage(it) }
                 moving.forEach { p -> out.documentCatalog.pages.remove(p) }
-                var before = anchor
                 for (p in moving) {
-                    out.documentCatalog.pages.insertBefore(p, before)
-                    before = p
+                    out.documentCatalog.pages.insertBefore(p, anchor)
                 }
             }
             out.save(target)
