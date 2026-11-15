@@ -70,4 +70,13 @@
     <string name="restore_done_title">اكتملت الاستعادة</string>
     <string name="restore_done_summary">تمت استعادة %1$d دفترًا و%2$d من ملفات PDF.</string>
     <string name="restore_renamed">أُعيدت تسمية %1$d من المستندات لتجنب التكرار.</string>
+    <!-- Part 2: input settings -->
+    <string name="finger_action">سلوك اللمس بالإصبع</string>
+    <string name="finger_action_scroll">تمرير وتكبير (القلم يكتب فقط)</string>
+    <string name="finger_action_draw">الرسم بالإصبع أيضاً</string>
+    <string name="finger_action_ignore">تجاهل لمس الإصبع</string>
+    <string name="pressure_curve">منحنى الضغط</string>
+    <string name="curve_linear">خطي</string>
+    <string name="curve_soft">ناعم</string>
+    <string name="curve_firm">قوي</string>
 </resources>

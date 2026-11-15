@@ -83,7 +83,7 @@ class ToolbarViewModel @Inject constructor(val settings: SettingsStore) : ViewMo
 
 /** Tools that own a settings popover (see ToolPopovers.kt). */
 private val POPOVER_TOOLS = setOf(
-    ToolType.PEN, ToolType.PENCIL, ToolType.BRUSH,
+    ToolType.PEN, ToolType.PENCIL, ToolType.BRUSH, ToolType.FOUNTAIN,
     ToolType.HIGHLIGHTER, ToolType.ERASER, ToolType.SHAPE
 )
 

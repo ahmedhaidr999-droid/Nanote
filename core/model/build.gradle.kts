@@ -20,7 +20,7 @@ android {
     }
     testOptions {
         unitTests {
-            // DocumentModel logs through android.util.Log on undo/redo.
+            // DocumentModel logs undo/redo via android.util.Log — return defaults in JVM tests
             isReturnDefaultValues = true
         }
     }

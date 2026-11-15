@@ -3,7 +3,6 @@ package com.nanote.feature.editor.toolbar
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -13,7 +12,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -25,29 +24,38 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.ArrowDownward
+import androidx.compose.material.icons.outlined.ArrowUpward
 import androidx.compose.material.icons.outlined.ChangeHistory
 import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.CropSquare
 import androidx.compose.material.icons.outlined.NorthEast
+import androidx.compose.material.icons.outlined.Pentagon
+import androidx.compose.material.icons.outlined.RoundedCorner
 import androidx.compose.material.icons.outlined.ShowChart
+import androidx.compose.material.icons.outlined.StarBorder
+import androidx.compose.material.icons.outlined.SyncAlt
+import androidx.compose.material.icons.outlined.TripOrigin
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -61,17 +69,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -79,24 +84,24 @@ import com.nanote.feature.editor.R
 import com.nanote.core.data.SettingsStore
 import com.nanote.core.model.QUICK_PALETTE
 import com.nanote.core.model.EraserMode
+import com.nanote.core.model.InkStyle
 import com.nanote.core.model.ShapeKind
 import com.nanote.core.model.ToolConfig
 import com.nanote.core.model.ToolPreset
 import com.nanote.core.model.ToolType
 import com.nanote.feature.editor.PaneController
 import com.nanote.core.design.theme.Dimens
-import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
- * Internal tool-settings popovers hosted by [NanoteToolbar].
+ * Internal tool-settings popovers hosted by [NanoteToolbar] (§2 / §3 / §6 / §14).
  *
  * IMPORTANT: every control writes straight through
  * [PaneController.updateToolConfig], whose collector pushes the new config to
- * the active tool and redraws the canvas immediately — color/thickness/opacity
- * changes apply live while dragging the sliders, with no page flipping needed.
- * The popover itself reads `pane.toolConfig` (NOT local state) so external
- * changes (e.g. presets applied elsewhere) are reflected too.
+ * the active tool and redraws the canvas immediately — color/thickness/opacity/
+ * pressure changes apply live while dragging the sliders, with no page
+ * flipping needed. The popover itself reads `pane.toolConfig` (NOT local
+ * state) so external changes (e.g. presets applied elsewhere) are reflected too.
  */
 
 /** Soft marker swatches offered for the highlighter. */
@@ -104,48 +109,54 @@ private val HIGHLIGHTER_PALETTE: List<Long> = listOf(
     0xFFFDE047L, 0xFF86EFACL, 0xFF93C5FDL, 0xFFFCA5A5L, 0xFFD8B4FEL, 0xFFFDBA74L
 )
 
-/** Live color / width / opacity triple of a configurable ink tool. */
-private data class InkValues(val color: Long, val width: Float, val opacity: Int)
+private val INK_TOOLS = setOf(
+    ToolType.PEN, ToolType.PENCIL, ToolType.BRUSH, ToolType.FOUNTAIN, ToolType.HIGHLIGHTER
+)
 
-private fun inkValuesOf(cfg: ToolConfig, tool: ToolType): InkValues? = when (tool) {
-    ToolType.PEN -> InkValues(cfg.penColor, cfg.penWidth, cfg.penOpacity)
-    ToolType.PENCIL -> InkValues(cfg.pencilColor, cfg.pencilWidth, cfg.pencilOpacity)
-    ToolType.BRUSH -> InkValues(cfg.brushColor, cfg.brushWidth, cfg.brushOpacity)
-    ToolType.HIGHLIGHTER -> InkValues(cfg.highlighterColor, cfg.highlighterWidth, cfg.highlighterOpacity)
-    else -> null
+/** Live ink style of a configurable tool (§2 tool configuration). */
+private fun inkStyleOf(cfg: ToolConfig, tool: ToolType): InkStyle = when (tool) {
+    ToolType.PEN -> InkStyle(cfg.penColor, cfg.penWidth, cfg.penOpacity, cfg.penPressure, cfg.penSmoothing)
+    ToolType.PENCIL -> InkStyle(cfg.pencilColor, cfg.pencilWidth, cfg.pencilOpacity, cfg.pencilPressure, cfg.pencilSmoothing)
+    ToolType.BRUSH -> InkStyle(cfg.brushColor, cfg.brushWidth, cfg.brushOpacity, cfg.brushPressure, cfg.brushSmoothing)
+    ToolType.FOUNTAIN -> InkStyle(cfg.fountainColor, cfg.fountainWidth, cfg.fountainOpacity, cfg.fountainPressure, cfg.fountainSmoothing)
+    ToolType.HIGHLIGHTER -> InkStyle(cfg.highlighterColor, cfg.highlighterWidth, cfg.highlighterOpacity, cfg.highlighterPressure, cfg.highlighterSmoothing)
+    else -> InkStyle(cfg.penColor, cfg.penWidth, cfg.penOpacity, cfg.penPressure, cfg.penSmoothing)
 }
 
-/** Builds a ToolConfig transform that applies only the provided fields. */
+/** Builds a ToolConfig transform that applies the provided ink style fields. */
 private fun inkUpdate(
     tool: ToolType,
     color: Long? = null,
     width: Float? = null,
-    opacity: Int? = null
+    opacity: Int? = null,
+    pressure: Float? = null,
+    smoothing: Float? = null
 ): (ToolConfig) -> ToolConfig = { cfg ->
     when (tool) {
         ToolType.PEN -> cfg.copy(
-            penColor = color ?: cfg.penColor,
-            penWidth = width ?: cfg.penWidth,
-            penOpacity = opacity ?: cfg.penOpacity
+            penColor = color ?: cfg.penColor, penWidth = width ?: cfg.penWidth,
+            penOpacity = opacity ?: cfg.penOpacity, penPressure = pressure ?: cfg.penPressure,
+            penSmoothing = smoothing ?: cfg.penSmoothing
         )
         ToolType.PENCIL -> cfg.copy(
-            pencilColor = color ?: cfg.pencilColor,
-            pencilWidth = width ?: cfg.pencilWidth,
-            pencilOpacity = opacity ?: cfg.pencilOpacity
+            pencilColor = color ?: cfg.pencilColor, pencilWidth = width ?: cfg.pencilWidth,
+            pencilOpacity = opacity ?: cfg.pencilOpacity, pencilPressure = pressure ?: cfg.pencilPressure,
+            pencilSmoothing = smoothing ?: cfg.pencilSmoothing
         )
         ToolType.BRUSH -> cfg.copy(
-            brushColor = color ?: cfg.brushColor,
-            brushWidth = width ?: cfg.brushWidth,
-            brushOpacity = opacity ?: cfg.brushOpacity
+            brushColor = color ?: cfg.brushColor, brushWidth = width ?: cfg.brushWidth,
+            brushOpacity = opacity ?: cfg.brushOpacity, brushPressure = pressure ?: cfg.brushPressure,
+            brushSmoothing = smoothing ?: cfg.brushSmoothing
+        )
+        ToolType.FOUNTAIN -> cfg.copy(
+            fountainColor = color ?: cfg.fountainColor, fountainWidth = width ?: cfg.fountainWidth,
+            fountainOpacity = opacity ?: cfg.fountainOpacity, fountainPressure = pressure ?: cfg.fountainPressure,
+            fountainSmoothing = smoothing ?: cfg.fountainSmoothing
         )
         ToolType.HIGHLIGHTER -> cfg.copy(
-            highlighterColor = color ?: cfg.highlighterColor,
-            highlighterWidth = width ?: cfg.highlighterWidth,
-            highlighterOpacity = opacity ?: cfg.highlighterOpacity
-        )
-        ToolType.SHAPE -> cfg.copy(
-            shapeColor = color ?: cfg.shapeColor,
-            shapeWidth = width ?: cfg.shapeWidth
+            highlighterColor = color ?: cfg.highlighterColor, highlighterWidth = width ?: cfg.highlighterWidth,
+            highlighterOpacity = opacity ?: cfg.highlighterOpacity, highlighterPressure = pressure ?: cfg.highlighterPressure,
+            highlighterSmoothing = smoothing ?: cfg.highlighterSmoothing
         )
         else -> cfg
     }
@@ -153,17 +164,13 @@ private fun inkUpdate(
 
 /**
  * Floating settings panel for [tool]. Hosted inside a focusable Popup by the
- * toolbar (above a bottom bar / beside a side bar) — not called directly by
- * EditorScreen.
+ * toolbar (above a bottom bar / beside a side bar).
  */
 @Composable
 fun ToolSettingsPopover(tool: ToolType, pane: PaneController, onDismiss: () -> Unit) {
-    // presets live in SettingsStore — resolve the shared toolbar VM
     val vm: ToolbarViewModel = hiltViewModel()
     val cfg by pane.toolConfig.collectAsStateWithLifecycle()
 
-    // spring entrance (AnimatedVisibility only animates on state changes,
-    // so flip `entered` after first composition)
     var entered by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { entered = true }
 
@@ -178,7 +185,7 @@ fun ToolSettingsPopover(tool: ToolType, pane: PaneController, onDismiss: () -> U
         )
     ) {
         Surface(
-            modifier = Modifier.widthIn(max = 300.dp),
+            modifier = Modifier.widthIn(max = 320.dp),
             shape = RoundedCornerShape(Dimens.radiusLg),
             color = MaterialTheme.colorScheme.surface,
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
@@ -187,12 +194,11 @@ fun ToolSettingsPopover(tool: ToolType, pane: PaneController, onDismiss: () -> U
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 420.dp)
+                    .heightIn(max = 460.dp)
                     .verticalScroll(rememberScrollState())
                     .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                // header
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         text = settingsTitle(tool),
@@ -200,661 +206,644 @@ fun ToolSettingsPopover(tool: ToolType, pane: PaneController, onDismiss: () -> U
                         color = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.weight(1f)
                     )
-                    IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
-                        Icon(
-                            imageVector = Icons.Outlined.Close,
-                            contentDescription = stringResource(R.string.close),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(16.dp)
-                        )
+                    TextButton(onClick = onDismiss) {
+                        Icon(Icons.Outlined.Close, contentDescription = null, Modifier.size(18.dp))
                     }
                 }
 
-                when (tool) {
-                    ToolType.PEN, ToolType.PENCIL, ToolType.BRUSH ->
-                        InkToolSection(tool = tool, pane = pane, settings = vm.settings)
-                    ToolType.HIGHLIGHTER -> HighlighterSection(pane = pane)
-                    ToolType.ERASER -> EraserSection(pane = pane)
-                    ToolType.SHAPE -> ShapeSection(pane = pane)
-                    else -> {}
+                when {
+                    tool in INK_TOOLS -> InkSettingsPanel(tool, pane, vm.settings, cfg)
+                    tool == ToolType.ERASER -> EraserSettingsPanel(pane, cfg)
+                    tool == ToolType.SHAPE -> ShapeSettingsPanel(pane, cfg)
+                    else -> Text(stringResource(R.string.no_settings))
                 }
             }
         }
     }
 }
 
-@Composable
-private fun settingsTitle(tool: ToolType): String = stringResource(
-    when (tool) {
-        ToolType.PEN -> R.string.pen_settings
-        ToolType.PENCIL -> R.string.pencil_settings
-        ToolType.BRUSH -> R.string.brush_settings
-        ToolType.HIGHLIGHTER -> R.string.highlighter_settings
-        ToolType.ERASER -> R.string.eraser_settings
-        ToolType.SHAPE -> R.string.tool_shapes
-        else -> R.string.tool_pen
-    }
-)
+private fun settingsTitle(tool: ToolType): String = tool.name.lowercase().replaceFirstChar { it.uppercase() }
 
-// ---------------------------------------------------------------------------
-// PEN / PENCIL / BRUSH
-// ---------------------------------------------------------------------------
+// ===========================================================================
+// Ink settings (§2 + §3)
+// ===========================================================================
 
 @Composable
-private fun InkToolSection(tool: ToolType, pane: PaneController, settings: SettingsStore) {
-    val cfg by pane.toolConfig.collectAsStateWithLifecycle()
-    val values = inkValuesOf(cfg, tool) ?: return
-    var showPicker by remember { mutableStateOf(false) }
+private fun InkSettingsPanel(
+    tool: ToolType,
+    pane: PaneController,
+    settings: SettingsStore,
+    cfg: ToolConfig
+) {
+    val style = inkStyleOf(cfg, tool)
+    val colorMemory by settings.colorMemory.collectAsStateWithLifecycle()
+    val presets by settings.presets.collectAsStateWithLifecycle()
+    var showCustomPicker by remember { mutableStateOf(false) }
+    var showSavePreset by remember { mutableStateOf(false) }
 
-    Text(
-        text = stringResource(R.string.color),
-        style = MaterialTheme.typography.labelMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant
-    )
+    // ---- color section (§3) ----
     ColorSwatchRow(
-        palette = QUICK_PALETTE,
-        selected = values.color,
-        onSelect = { c -> pane.updateToolConfig(inkUpdate(tool, color = c)) },
-        onCustom = { showPicker = true }
+        current = style.color,
+        palette = if (tool == ToolType.HIGHLIGHTER) HIGHLIGHTER_PALETTE else QUICK_PALETTE,
+        favorites = colorMemory.favorites,
+        recents = colorMemory.recent,
+        onPick = { c ->
+            pane.updateToolConfig(inkUpdate(tool, color = c))
+            settings.rememberColor(c)
+        },
+        onToggleFavorite = { c -> settings.toggleFavoriteColor(c) },
+        onCustom = { showCustomPicker = true }
     )
 
-    LabeledSlider(
-        label = stringResource(R.string.thickness),
-        valueText = stringResource(R.string.width_value, values.width),
-        value = values.width,
-        onValueChange = { w -> pane.updateToolConfig(inkUpdate(tool, width = w)) },
-        range = 1f..40f
-    )
-    LabeledSlider(
-        label = stringResource(R.string.opacity),
-        valueText = stringResource(R.string.opacity_value, values.opacity),
-        value = values.opacity.toFloat(),
-        onValueChange = { v -> pane.updateToolConfig(inkUpdate(tool, opacity = v.roundToInt())) },
-        range = 0f..100f
-    )
-
-    PresetSection(tool = tool, pane = pane, settings = settings)
-
-    if (showPicker) {
-        ColorPickerDialog(
-            initialColor = values.color,
-            onDismiss = { showPicker = false },
+    if (showCustomPicker) {
+        HsvColorPickerDialog(
+            initial = style.color,
+            onDismiss = { showCustomPicker = false },
             onConfirm = { c ->
                 pane.updateToolConfig(inkUpdate(tool, color = c))
-                showPicker = false
+                settings.rememberColor(c)
+                showCustomPicker = false
             }
         )
     }
-}
 
-// ---------------------------------------------------------------------------
-// HIGHLIGHTER
-// ---------------------------------------------------------------------------
-
-@Composable
-private fun HighlighterSection(pane: PaneController) {
-    val cfg by pane.toolConfig.collectAsStateWithLifecycle()
-    var showPicker by remember { mutableStateOf(false) }
-
-    Text(
-        text = stringResource(R.string.color),
-        style = MaterialTheme.typography.labelMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant
-    )
-    ColorSwatchRow(
-        palette = HIGHLIGHTER_PALETTE,
-        selected = cfg.highlighterColor,
-        onSelect = { c -> pane.updateToolConfig { it.copy(highlighterColor = c) } },
-        onCustom = { showPicker = true }
-    )
-
+    // ---- width (§2 thickness) ----
     LabeledSlider(
         label = stringResource(R.string.thickness),
-        valueText = stringResource(R.string.width_value, cfg.highlighterWidth),
-        value = cfg.highlighterWidth,
-        onValueChange = { w -> pane.updateToolConfig { it.copy(highlighterWidth = w) } },
-        range = 8f..60f
+        value = style.width,
+        range = 0.5f..80f,
+        display = { "%.1f".format(it) },
+        onCommit = { pane.updateToolConfig(inkUpdate(tool, width = it)) }
     )
+
+    // ---- opacity ----
     LabeledSlider(
         label = stringResource(R.string.opacity),
-        valueText = stringResource(R.string.opacity_value, cfg.highlighterOpacity),
-        value = cfg.highlighterOpacity.toFloat(),
-        onValueChange = { v -> pane.updateToolConfig { it.copy(highlighterOpacity = v.roundToInt()) } },
-        range = 0f..100f
-    )
-    // opacity is capped internally (~65% max alpha) so text stays readable
-    Text(
-        text = stringResource(R.string.highlighter_opacity_note),
-        style = MaterialTheme.typography.labelSmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant
+        value = style.opacity.toFloat(),
+        range = 5f..100f,
+        display = { "${it.roundToInt()}%" },
+        onCommit = { pane.updateToolConfig(inkUpdate(tool, opacity = it.roundToInt())) }
     )
 
-    if (showPicker) {
-        ColorPickerDialog(
-            initialColor = cfg.highlighterColor,
-            onDismiss = { showPicker = false },
-            onConfirm = { c ->
-                pane.updateToolConfig { it.copy(highlighterColor = c) }
-                showPicker = false
-            }
-        )
-    }
-}
+    // ---- pressure response (§3) ----
+    LabeledSlider(
+        label = stringResource(R.string.pressure_response),
+        value = style.pressureResponse,
+        range = 0f..1f,
+        display = { "${(it * 100).roundToInt()}%" },
+        onCommit = { pane.updateToolConfig(inkUpdate(tool, pressure = it)) }
+    )
 
-// ---------------------------------------------------------------------------
-// ERASER
-// ---------------------------------------------------------------------------
+    // ---- smoothing (§2) ----
+    LabeledSlider(
+        label = stringResource(R.string.smoothing),
+        value = style.smoothing,
+        range = 0f..1f,
+        display = { "${(it * 100).roundToInt()}%" },
+        onCommit = { pane.updateToolConfig(inkUpdate(tool, smoothing = it)) }
+    )
 
-@Composable
-private fun EraserSection(pane: PaneController) {
-    val cfg by pane.toolConfig.collectAsStateWithLifecycle()
-
-    listOf(
-        EraserMode.PIXEL to R.string.tool_eraser_pixel,
-        EraserMode.STROKE to R.string.tool_eraser_stroke,
-        EraserMode.OBJECT to R.string.tool_eraser_object
-    ).forEach { (mode, labelRes) ->
-        val selected = cfg.eraserMode == mode
+    // ---- presets (§3 saved pen presets) ----
+    val toolPresets = presets.filter { it.tool == tool }
+    Text(stringResource(R.string.presets_section), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    if (toolPresets.isEmpty()) {
+        Text(stringResource(R.string.no_presets_yet), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    } else {
         Row(
-            modifier = Modifier
+            Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(Dimens.radiusMd))
-                .clickable { pane.updateToolConfig { it.copy(eraserMode = mode) } }
-                .padding(horizontal = 2.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            RadioButton(
-                selected = selected,
-                onClick = { pane.updateToolConfig { it.copy(eraserMode = mode) } }
-            )
-            Text(
-                text = stringResource(labelRes),
-                style = MaterialTheme.typography.bodyMedium,
-                color = if (selected) MaterialTheme.colorScheme.primary
-                else MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            toolPresets.forEach { p ->
+                PresetChip(
+                    preset = p,
+                    onClick = {
+                        pane.updateToolConfig(inkUpdate(tool, color = p.color, width = p.width, opacity = p.opacity, pressure = p.pressureResponse, smoothing = p.smoothing))
+                    },
+                    onLongPress = { settings.removePreset(p.name) }
+                )
+            }
         }
     }
-
-    LabeledSlider(
-        label = stringResource(R.string.eraser_size),
-        valueText = stringResource(R.string.width_value, cfg.eraserSize),
-        value = cfg.eraserSize,
-        onValueChange = { v -> pane.updateToolConfig { it.copy(eraserSize = v) } },
-        range = 10f..120f
-    )
-
-    // live preview circle: the 10..120pt range maps to a 10..56dp diameter
-    val previewDiameter = 10f + ((cfg.eraserSize - 10f) / 110f) * 46f
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(60.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Box(
-            modifier = Modifier
-                .size(previewDiameter.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.surfaceVariant)
-                .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape)
-        )
+    TextButton(onClick = { showSavePreset = true }) {
+        Icon(Icons.Outlined.Add, contentDescription = null, Modifier.size(16.dp))
+        Spacer(Modifier.width(4.dp))
+        Text(stringResource(R.string.save_preset))
     }
-}
-
-// ---------------------------------------------------------------------------
-// SHAPES
-// ---------------------------------------------------------------------------
-
-@Composable
-private fun ShapeSection(pane: PaneController) {
-    val cfg by pane.toolConfig.collectAsStateWithLifecycle()
-    var showPicker by remember { mutableStateOf(false) }
-
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally)
-    ) {
-        ShapeKindButton(Icons.Outlined.ShowChart, R.string.shape_line, cfg.shapeKind == ShapeKind.LINE) {
-            pane.updateToolConfig { it.copy(shapeKind = ShapeKind.LINE) }
-        }
-        ShapeKindButton(Icons.Outlined.NorthEast, R.string.shape_arrow, cfg.shapeKind == ShapeKind.ARROW) {
-            pane.updateToolConfig { it.copy(shapeKind = ShapeKind.ARROW) }
-        }
-        ShapeKindButton(Icons.Outlined.CropSquare, R.string.shape_rect, cfg.shapeKind == ShapeKind.RECT) {
-            pane.updateToolConfig { it.copy(shapeKind = ShapeKind.RECT) }
-        }
-        ShapeKindButton(Icons.Outlined.Circle, R.string.shape_circle, cfg.shapeKind == ShapeKind.CIRCLE) {
-            pane.updateToolConfig { it.copy(shapeKind = ShapeKind.CIRCLE) }
-        }
-        ShapeKindButton(Icons.Outlined.ChangeHistory, R.string.shape_triangle, cfg.shapeKind == ShapeKind.TRIANGLE) {
-            pane.updateToolConfig { it.copy(shapeKind = ShapeKind.TRIANGLE) }
-        }
-    }
-
-    Text(
-        text = stringResource(R.string.color),
-        style = MaterialTheme.typography.labelMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant
-    )
-    ColorSwatchRow(
-        palette = QUICK_PALETTE,
-        selected = cfg.shapeColor,
-        onSelect = { c -> pane.updateToolConfig { it.copy(shapeColor = c) } },
-        onCustom = { showPicker = true }
-    )
-
-    LabeledSlider(
-        label = stringResource(R.string.thickness),
-        valueText = stringResource(R.string.width_value, cfg.shapeWidth),
-        value = cfg.shapeWidth,
-        onValueChange = { v -> pane.updateToolConfig { it.copy(shapeWidth = v) } },
-        range = 1f..20f
-    )
-
-    if (showPicker) {
-        ColorPickerDialog(
-            initialColor = cfg.shapeColor,
-            onDismiss = { showPicker = false },
-            onConfirm = { c ->
-                pane.updateToolConfig { it.copy(shapeColor = c) }
-                showPicker = false
+    if (showSavePreset) {
+        SavePresetDialog(
+            initialName = "",
+            onDismiss = { showSavePreset = false },
+            onConfirm = { name ->
+                settings.addPreset(
+                    ToolPreset(
+                        name = name,
+                        tool = tool,
+                        color = style.color,
+                        width = style.width,
+                        opacity = style.opacity,
+                        pressureResponse = style.pressureResponse,
+                        smoothing = style.smoothing
+                    )
+                )
+                showSavePreset = false
             }
         )
     }
 }
 
-@Composable
-private fun ShapeKindButton(
-    icon: ImageVector,
-    labelRes: Int,
-    selected: Boolean,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit
-) {
-    val bg by animateColorAsState(
-        targetValue = if (selected) MaterialTheme.colorScheme.primaryContainer
-        else MaterialTheme.colorScheme.surfaceVariant,
-        label = "shapeKindBg"
-    )
-    val tint by animateColorAsState(
-        targetValue = if (selected) MaterialTheme.colorScheme.primary
-        else MaterialTheme.colorScheme.onSurfaceVariant,
-        label = "shapeKindTint"
-    )
-    Box(
-        modifier
-            .size(40.dp)
-            .clip(RoundedCornerShape(Dimens.radiusMd))
-            .background(bg)
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = stringResource(labelRes),
-            tint = tint,
-            modifier = Modifier.size(20.dp)
-        )
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Shared building blocks
-// ---------------------------------------------------------------------------
-
-/** Label + live value text + continuous slider. */
-@Composable
-private fun LabeledSlider(
-    label: String,
-    valueText: String,
-    value: Float,
-    onValueChange: (Float) -> Unit,
-    range: ClosedFloatingPointRange<Float>
-) {
-    Column {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.weight(1f))
-            Text(
-                text = valueText,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.primary
-            )
-        }
-        Slider(
-            value = value,
-            onValueChange = onValueChange,
-            valueRange = range
-        )
-    }
-}
-
-/** Horizontally scrollable swatch row (28dp circles, 2dp primary selection ring). */
+/** Palette + favorites + recents + custom-color entry (§3). */
 @Composable
 private fun ColorSwatchRow(
+    current: Long,
     palette: List<Long>,
-    selected: Long,
-    onSelect: (Long) -> Unit,
+    favorites: List<Long>,
+    recents: List<Long>,
+    onPick: (Long) -> Unit,
+    onToggleFavorite: (Long) -> Unit,
     onCustom: () -> Unit
 ) {
-    Row(
-        modifier = Modifier.horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        palette.forEach { color ->
-            Swatch(color = color, selected = color == selected, onClick = { onSelect(color) })
-        }
-        CustomSwatch(selected = selected !in palette, onClick = onCustom)
-    }
-}
-
-@Composable
-private fun Swatch(color: Long, selected: Boolean, onClick: () -> Unit) {
-    val hex = remember(color) { String.format("#%06X", color and 0xFFFFFF) }
-    val size by animateDpAsState(
-        targetValue = if (selected) 22.dp else 26.dp,
-        animationSpec = spring(stiffness = Spring.StiffnessMedium),
-        label = "swatchSize"
-    )
-    Box(modifier = Modifier.size(30.dp), contentAlignment = Alignment.Center) {
-        if (selected) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(stringResource(R.string.color), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // current color + custom picker entry
             Box(
                 Modifier
-                    .fillMaxSize()
+                    .size(32.dp)
                     .clip(CircleShape)
-                    .border(2.dp, MaterialTheme.colorScheme.primary, CircleShape)
-            )
+                    .background(Color(current.toInt()))
+                    .border(2.dp, MaterialTheme.colorScheme.outline, CircleShape)
+                    .clickable { onCustom() },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    Icons.Outlined.Add,
+                    contentDescription = stringResource(R.string.custom_color),
+                    tint = Color.White,
+                    modifier = Modifier.size(14.dp)
+                )
+            }
+            palette.forEach { c ->
+                ColorSwatch(color = c, selected = c == current, onClick = { onPick(c) })
+            }
         }
-        Box(
-            modifier = Modifier
-                .size(size)
-                .clip(CircleShape)
-                .background(Color(color))
-                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
-                .clickable(onClick = onClick)
-                .semantics { contentDescription = hex }
-        )
-    }
-}
-
-@Composable
-private fun CustomSwatch(selected: Boolean, onClick: () -> Unit) {
-    val size by animateDpAsState(
-        targetValue = if (selected) 22.dp else 26.dp,
-        animationSpec = spring(stiffness = Spring.StiffnessMedium),
-        label = "customSwatchSize"
-    )
-    Box(modifier = Modifier.size(30.dp), contentAlignment = Alignment.Center) {
-        if (selected) {
-            Box(
+        if (favorites.isNotEmpty()) {
+            Text(stringResource(R.string.favorite_colors), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(
                 Modifier
-                    .fillMaxSize()
-                    .clip(CircleShape)
-                    .border(2.dp, MaterialTheme.colorScheme.primary, CircleShape)
-            )
-        }
-        Box(
-            modifier = Modifier
-                .size(size)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.surfaceVariant)
-                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
-                .clickable(onClick = onClick),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = Icons.Outlined.Add,
-                contentDescription = stringResource(R.string.custom_color),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(14.dp)
-            )
-        }
-    }
-}
-
-/** Preset chips (filtered per tool) + "save current as preset" button. */
-@Composable
-private fun PresetSection(tool: ToolType, pane: PaneController, settings: SettingsStore) {
-    val cfg by pane.toolConfig.collectAsStateWithLifecycle()
-    val presets by settings.presets.collectAsStateWithLifecycle()
-    val mine = remember(presets, tool) { presets.filter { it.tool == tool } }
-    val values = inkValuesOf(cfg, tool) ?: return
-    val nextName = stringResource(R.string.preset_name, mine.size + 1)
-
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            text = stringResource(R.string.presets),
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.weight(1f)
-        )
-        // save the current color / width / opacity as a new preset
-        Box(
-            modifier = Modifier
-                .size(28.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.primaryContainer)
-                .clickable {
-                    settings.addPreset(
-                        ToolPreset(
-                            name = nextName,
-                            tool = tool,
-                            color = values.color,
-                            width = values.width,
-                            opacity = values.opacity
-                        )
-                    )
-                },
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = Icons.Outlined.Add,
-                contentDescription = stringResource(R.string.save_preset),
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(14.dp)
-            )
-        }
-    }
-
-    Row(
-        modifier = Modifier.horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(6.dp)
-    ) {
-        mine.forEach { preset ->
-            val isCurrent = preset.color == values.color &&
-                abs(preset.width - values.width) < 0.05f &&
-                preset.opacity == values.opacity
-            Surface(
-                shape = RoundedCornerShape(Dimens.radiusMd),
-                color = if (isCurrent) MaterialTheme.colorScheme.primaryContainer
-                else MaterialTheme.colorScheme.surfaceVariant,
-                border = if (isCurrent) BorderStroke(1.dp, MaterialTheme.colorScheme.primary) else null,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(Dimens.radiusMd))
-                    .clickable {
-                        pane.updateToolConfig(
-                            inkUpdate(
-                                tool,
-                                color = preset.color,
-                                width = preset.width,
-                                opacity = preset.opacity
-                            )
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                favorites.forEach { c ->
+                    Box {
+                        ColorSwatch(color = c, selected = c == current, onClick = { onPick(c) })
+                        Icon(
+                            Icons.Filled.Star,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier
+                                .size(10.dp)
+                                .align(Alignment.TopEnd)
                         )
                     }
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(12.dp)
-                            .clip(CircleShape)
-                            .background(Color(preset.color))
-                            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
-                    )
-                    Text(
-                        text = preset.name,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = if (isCurrent) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.onSurfaceVariant
-                    )
                 }
             }
         }
+        if (recents.isNotEmpty()) {
+            Text(stringResource(R.string.recent_colors), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                recents.forEach { c -> ColorSwatch(color = c, selected = c == current, onClick = { onPick(c) }) }
+            }
+        }
+        // favorite the current color
+        TextButton(onClick = { onToggleFavorite(current) }) {
+            Icon(
+                if (current in favorites) Icons.Filled.Star else Icons.Outlined.StarBorder,
+                contentDescription = null,
+                Modifier.size(16.dp)
+            )
+            Spacer(Modifier.width(4.dp))
+            Text(stringResource(if (current in favorites) R.string.unfavorite_color else R.string.favorite_color))
+        }
     }
 }
 
-// ---------------------------------------------------------------------------
-// Compact HSV color picker
-// ---------------------------------------------------------------------------
-
-/**
- * Compact custom color dialog: hue spectrum bar + saturation / brightness
- * sliders with a live preview circle. Returns the chosen ARGB Long
- * (0xFF......, matching the ToolConfig color format).
- */
 @Composable
-private fun ColorPickerDialog(
-    initialColor: Long,
+private fun ColorSwatch(color: Long, selected: Boolean, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .size(28.dp)
+            .clip(CircleShape)
+            .background(Color(color.toInt()))
+            .border(
+                width = if (selected) 3.dp else 1.dp,
+                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                shape = CircleShape
+            )
+            .clickable(onClick = onClick)
+            .semantics { contentDescription = "color swatch" }
+    )
+}
+
+/** Full HSV picker: saturation/value square + hue slider (§3 custom colors). */
+@Composable
+private fun HsvColorPickerDialog(
+    initial: Long,
     onDismiss: () -> Unit,
     onConfirm: (Long) -> Unit
 ) {
-    val hsv = remember(initialColor) {
-        FloatArray(3).also { android.graphics.Color.colorToHSV(initialColor.toInt(), it) }
+    val initColor = Color(initial.toInt())
+    var hue by remember { mutableFloatStateOf(0f) }
+    var sat by remember { mutableFloatStateOf(0f) }
+    var value by remember { mutableFloatStateOf(0f) }
+    LaunchedEffect(initColor) {
+        val f = FloatArray(3)
+        android.graphics.Color.colorToHSV(initColor.toArgb(), f)
+        hue = f[0]; sat = f[1]; value = f[2]
     }
-    var hue by remember(initialColor) { mutableFloatStateOf(hsv[0]) }
-    var saturation by remember(initialColor) { mutableFloatStateOf(hsv[1]) }
-    var brightness by remember(initialColor) { mutableFloatStateOf(hsv[2]) }
-    val preview = Color.hsv(hue, saturation, brightness)
+
+    fun currentColor(): Color {
+        val c = android.graphics.Color.HSVToColor(floatArrayOf(hue, sat, value))
+        return Color(c)
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = {
-            Text(
-                text = stringResource(R.string.custom_color),
-                style = MaterialTheme.typography.titleMedium
-            )
-        },
+        title = { Text(stringResource(R.string.custom_color)) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Box(
-                    modifier = Modifier
-                        .size(48.dp)
-                        .clip(CircleShape)
-                        .background(preview)
-                        .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape)
-                        .align(Alignment.CenterHorizontally)
-                )
-                Text(
-                    text = stringResource(R.string.hue),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                SpectrumSlider(
-                    position = hue / 360f,
-                    onPositionChange = { hue = it * 360f }
-                )
-                Text(
-                    text = stringResource(R.string.saturation),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Slider(value = saturation, onValueChange = { saturation = it })
-                Text(
-                    text = stringResource(R.string.brightness),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Slider(value = brightness, onValueChange = { brightness = it })
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                // SV square
+                var canvasSize by remember { mutableStateOf(IntSize.Zero) }
+                Canvas(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(160.dp)
+                        .clip(RoundedCornerShape(Dimens.radiusMd))
+                        .onSizeChanged { canvasSize = it }
+                        .pointerInput(Unit) {
+                            detectDragGestures(
+                                onDragStart = { off ->
+                                    sat = (off.x / canvasSize.width).coerceIn(0f, 1f)
+                                    value = 1f - (off.y / canvasSize.height).coerceIn(0f, 1f)
+                                }
+                            ) { change, _ ->
+                                sat = (change.position.x / canvasSize.width).coerceIn(0f, 1f)
+                                value = 1f - (change.position.y / canvasSize.height).coerceIn(0f, 1f)
+                            }
+                        }
+                ) {
+                    val w = size.width
+                    val h = size.height
+                    // draw SV plane as a coarse gradient grid
+                    for (x in 0..24) {
+                        for (y in 0..24) {
+                            drawRect(
+                                color = Color(android.graphics.Color.HSVToColor(floatArrayOf(hue, x / 24f, 1f - y / 24f))),
+                                topLeft = Offset(w * x / 25f, h * y / 25f),
+                                size = androidx.compose.ui.geometry.Size(w / 25f + 1f, h / 25f + 1f)
+                            )
+                        }
+                    }
+                    // cursor
+                    drawCircle(
+                        color = Color.White,
+                        radius = 8f,
+                        center = Offset(w * sat, h * (1f - value)),
+                        style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3f)
+                    )
+                    drawCircle(
+                        color = Color.Black,
+                        radius = 8f,
+                        center = Offset(w * sat, h * (1f - value)),
+                        style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.5f)
+                    )
+                }
+                // hue slider
+                Canvas(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(28.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .pointerInput(Unit) {
+                            detectDragGestures(
+                                onDragStart = { off -> hue = (off.x / size.width * 360f).coerceIn(0f, 360f) }
+                            ) { change, _ ->
+                                hue = (change.position.x / size.width * 360f).coerceIn(0f, 360f)
+                            }
+                        }
+                ) {
+                    val w = size.width
+                    for (x in 0..48) {
+                        val f = x / 48f
+                        drawRect(
+                            color = Color(android.graphics.Color.HSVToColor(floatArrayOf(f * 360f, 1f, 1f))),
+                            topLeft = Offset(w * f, 0f),
+                            size = androidx.compose.ui.geometry.Size(w / 48f + 1f, size.height)
+                        )
+                    }
+                    drawRect(
+                        color = Color.White,
+                        topLeft = Offset(w * (hue / 360f) - 4f, 0f),
+                        size = androidx.compose.ui.geometry.Size(8f, size.height),
+                        style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3f)
+                    )
+                }
+                // preview
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Box(
+                        Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(currentColor())
+                            .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape)
+                    )
+                    Text(
+                        "#%06X".format(android.graphics.Color.HSVToColor(floatArrayOf(hue, sat, value)) and 0xFFFFFF),
+                        style = MaterialTheme.typography.labelLarge
+                    )
+                }
             }
         },
         confirmButton = {
-            TextButton(
-                onClick = { onConfirm(preview.toArgb().toLong() and 0xFFFFFFFFL) }
-            ) {
-                Text(stringResource(R.string.ok))
-            }
+            TextButton(onClick = {
+                onConfirm(android.graphics.Color.HSVToColor(floatArrayOf(hue, sat, value)).toLong() or 0xFF000000)
+            }) { Text(stringResource(R.string.done)) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text(stringResource(R.string.cancel))
-            }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
         }
     )
 }
 
-/**
- * Draggable hue spectrum bar (tap-to-seek + horizontal drag). The rainbow
- * gradient is intrinsic to a color picker, everything else uses the theme.
- */
 @Composable
-private fun SpectrumSlider(position: Float, onPositionChange: (Float) -> Unit) {
-    var trackWidthPx by remember { mutableFloatStateOf(1f) }
-    val thumbRadiusPx = with(LocalDensity.current) { 10.dp.toPx() }
+private fun SavePresetDialog(initialName: String, onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
+    var name by remember { mutableStateOf(initialName) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.save_preset)) },
+        text = {
+            androidx.compose.material3.OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                singleLine = true,
+                label = { Text(stringResource(R.string.preset_name)) }
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { if (name.isNotBlank()) onConfirm(name.trim()) }) { Text(stringResource(R.string.save)) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
+        }
+    )
+}
 
-    fun Float.toPosition(): Float {
-        val usable = trackWidthPx - 2f * thumbRadiusPx
-        if (usable <= 0f) return 0f
-        return ((this - thumbRadiusPx) / usable).coerceIn(0f, 1f)
-    }
-
-    Box(
+@Composable
+private fun PresetChip(preset: ToolPreset, onClick: () -> Unit, onLongPress: () -> Unit) {
+    Surface(
+        shape = RoundedCornerShape(Dimens.radiusMd),
+        color = MaterialTheme.colorScheme.surfaceVariant,
         modifier = Modifier
-            .fillMaxWidth()
-            .height(28.dp)
-            .onSizeChanged { trackWidthPx = it.width.toFloat().coerceAtLeast(1f) }
-            .clip(RoundedCornerShape(14.dp))
-            .pointerInput(Unit) {
-                detectTapGestures { offset ->
-                    onPositionChange(offset.x.toPosition())
-                }
-            }
-            .pointerInput(Unit) {
-                detectHorizontalDragGestures { change, _ ->
-                    change.consume()
-                    onPositionChange(change.position.x.toPosition())
-                }
-            }
+            .clickable(onClick = onClick)
+            .semantics { contentDescription = "preset ${preset.name}" }
     ) {
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val w = size.width
-            val step = w / 48f
-            var x = 0f
-            while (x < w) {
-                drawRect(
-                    color = Color.hsv((x / w) * 360f, 1f, 1f),
-                    topLeft = Offset(x, 0f),
-                    size = Size(step + 1f, size.height)
-                )
-                x += step
+        Row(
+            Modifier.padding(start = 4.dp, end = 10.dp, top = 4.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Box(
+                Modifier
+                    .size(20.dp)
+                    .clip(CircleShape)
+                    .background(Color(preset.color.toInt()))
+                    .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape)
+                    .pointerInput(Unit) {
+                        detectTapGestures(onLongPress = { onLongPress() })
+                    }
+            )
+            Text(preset.name, style = MaterialTheme.typography.labelMedium)
+        }
+    }
+}
+
+// ===========================================================================
+// Eraser settings (§6)
+// ===========================================================================
+
+@Composable
+private fun EraserSettingsPanel(pane: PaneController, cfg: ToolConfig) {
+    Text(stringResource(R.string.eraser_mode), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Column {
+        EraserModeRow(
+            label = stringResource(R.string.eraser_stroke),
+            selected = cfg.eraserMode == EraserMode.STROKE,
+            onSelect = { pane.updateToolConfig { it.copy(eraserMode = EraserMode.STROKE) } }
+        )
+        EraserModeRow(
+            label = stringResource(R.string.eraser_object),
+            selected = cfg.eraserMode == EraserMode.OBJECT,
+            onSelect = { pane.updateToolConfig { it.copy(eraserMode = EraserMode.OBJECT) } }
+        )
+        EraserModeRow(
+            label = stringResource(R.string.eraser_area),
+            selected = cfg.eraserMode == EraserMode.PIXEL,
+            onSelect = { pane.updateToolConfig { it.copy(eraserMode = EraserMode.PIXEL) } }
+        )
+    }
+    LabeledSlider(
+        label = stringResource(R.string.eraser_size),
+        value = cfg.eraserSize,
+        range = 8f..160f,
+        display = { "${it.roundToInt()}" },
+        onCommit = { pane.updateToolConfig { c -> c.copy(eraserSize = it) } }
+    )
+}
+
+@Composable
+private fun EraserModeRow(label: String, selected: Boolean, onSelect: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onSelect),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        RadioButton(selected = selected, onClick = onSelect)
+        Text(label, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+// ===========================================================================
+// Shape settings (§14)
+// ===========================================================================
+
+@Composable
+private fun ShapeSettingsPanel(pane: PaneController, cfg: ToolConfig) {
+    Text(stringResource(R.string.shape_kind), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+    // 3x3 grid of the nine shape kinds
+    val kinds = listOf(
+        ShapeKind.LINE to Icons.Outlined.ShowChart,
+        ShapeKind.ARROW to Icons.Outlined.NorthEast,
+        ShapeKind.DOUBLE_ARROW to Icons.Outlined.SyncAlt,
+        ShapeKind.RECT to Icons.Outlined.CropSquare,
+        ShapeKind.ROUNDED_RECT to Icons.Outlined.RoundedCorner,
+        ShapeKind.CIRCLE to Icons.Outlined.Circle,
+        ShapeKind.ELLIPSE to Icons.Outlined.TripOrigin,
+        ShapeKind.TRIANGLE to Icons.Outlined.ChangeHistory,
+        ShapeKind.POLYGON to Icons.Outlined.Pentagon
+    )
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        kinds.chunked(3).forEach { row ->
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth()) {
+                row.forEach { (kind, icon) ->
+                    val selected = cfg.shapeKind == kind
+                    val bg by animateColorAsState(
+                        if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                        label = "shapeKindBg"
+                    )
+                    Surface(
+                        shape = RoundedCornerShape(Dimens.radiusMd),
+                        color = bg,
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable { pane.updateToolConfig { it.copy(shapeKind = kind) } }
+                    ) {
+                        Column(
+                            Modifier.padding(vertical = 8.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Icon(
+                                icon,
+                                contentDescription = shapeKindLabel(kind),
+                                tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                    }
+                }
             }
         }
-        // thumb (reads live position so it tracks the drag)
-        Box(
-            modifier = Modifier
-                .align(Alignment.CenterStart)
-                .offset {
-                    val usable = (trackWidthPx - 2f * thumbRadiusPx).coerceAtLeast(1f)
-                    IntOffset((position * usable).roundToInt(), 0)
-                }
-                .size(20.dp)
-                .clip(CircleShape)
-                .background(Color.hsv(position * 360f, 1f, 1f))
-                .border(2.dp, MaterialTheme.colorScheme.surface, CircleShape)
+    }
+
+    // stroke color
+    ColorSwatchRow(
+        current = cfg.shapeColor,
+        palette = QUICK_PALETTE,
+        favorites = emptyList(),
+        recents = emptyList(),
+        onPick = { c -> pane.updateToolConfig { it.copy(shapeColor = c) } },
+        onToggleFavorite = {},
+        onCustom = {}
+    )
+
+    LabeledSlider(
+        label = stringResource(R.string.thickness),
+        value = cfg.shapeWidth,
+        range = 0.5f..40f,
+        display = { "%.1f".format(it) },
+        onCommit = { pane.updateToolConfig { c -> c.copy(shapeWidth = it) } }
+    )
+    LabeledSlider(
+        label = stringResource(R.string.opacity),
+        value = cfg.shapeOpacity.toFloat(),
+        range = 5f..100f,
+        display = { "${it.roundToInt()}%" },
+        onCommit = { pane.updateToolConfig { c -> c.copy(shapeOpacity = it.roundToInt()) } }
+    )
+
+    SwitchRow(
+        label = stringResource(R.string.filled_shape),
+        checked = cfg.shapeFilled,
+        onChecked = { pane.updateToolConfig { it.copy(shapeFilled = !it.shapeFilled) } }
+    )
+    if (cfg.shapeFilled) {
+        ColorSwatchRow(
+            current = cfg.shapeFillColor,
+            palette = listOf(
+                0x332563EBL, 0x3322C55EL, 0x33EF4444L, 0x33F59E0BL, 0x338B5CF6L, 0x33000000L
+            ),
+            favorites = emptyList(),
+            recents = emptyList(),
+            onPick = { c -> pane.updateToolConfig { it.copy(shapeFillColor = c) } },
+            onToggleFavorite = {},
+            onCustom = {}
+        )
+    }
+    SwitchRow(
+        label = stringResource(R.string.snap_to_geometry),
+        checked = cfg.shapeSnap,
+        onChecked = { pane.updateToolConfig { it.copy(shapeSnap = !it.shapeSnap) } }
+    )
+    SwitchRow(
+        label = stringResource(R.string.shape_recognition),
+        checked = cfg.shapeRecognition,
+        onChecked = { pane.updateToolConfig { it.copy(shapeRecognition = !it.shapeRecognition) } }
+    )
+}
+
+@Composable
+private fun SwitchRow(label: String, checked: Boolean, onChecked: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onChecked),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+        Switch(checked = checked, onCheckedChange = { onChecked() })
+    }
+}
+
+@Composable
+private fun shapeKindLabel(kind: ShapeKind): String = stringResource(
+    when (kind) {
+        ShapeKind.LINE -> R.string.shape_line
+        ShapeKind.ARROW -> R.string.shape_arrow
+        ShapeKind.DOUBLE_ARROW -> R.string.shape_double_arrow
+        ShapeKind.RECT -> R.string.shape_rect
+        ShapeKind.ROUNDED_RECT -> R.string.shape_rounded_rect
+        ShapeKind.CIRCLE -> R.string.shape_circle
+        ShapeKind.ELLIPSE -> R.string.shape_ellipse
+        ShapeKind.TRIANGLE -> R.string.shape_triangle
+        ShapeKind.POLYGON -> R.string.shape_polygon
+    }
+)
+
+// ===========================================================================
+// Shared widgets
+// ===========================================================================
+
+@Composable
+private fun LabeledSlider(
+    label: String,
+    value: Float,
+    range: ClosedFloatingPointRange<Float>,
+    display: (Float) -> String,
+    onCommit: (Float) -> Unit
+) {
+    Column {
+        Row(Modifier.fillMaxWidth()) {
+            Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+            Text(display(value), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+        }
+        Slider(
+            value = value.coerceIn(range.start, range.endInclusive),
+            onValueChange = { onCommit(it) },
+            valueRange = range
         )
     }
 }

@@ -15,4 +15,5 @@
     <string name="size_a4">A4</string>
     <string name="size_a5">A5</string>
     <string name="size_letter">Letter</string>
+    <string name="size_legal">قانوني</string>
 </resources>

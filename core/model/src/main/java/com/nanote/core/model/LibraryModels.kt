@@ -50,7 +50,8 @@ enum class PageOrientation { PORTRAIT, LANDSCAPE }
 enum class PageSize(val widthPts: Float, val heightPts: Float) {
     A4(595f, 842f),
     A5(420f, 595f),
-    LETTER(612f, 792f);
+    LETTER(612f, 792f),
+    LEGAL(612f, 1008f);
 
     /** Aspect ratio (width / height) honouring the orientation. */
     fun aspectRatio(orientation: PageOrientation): Float = when (orientation) {

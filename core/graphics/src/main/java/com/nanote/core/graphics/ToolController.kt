@@ -4,10 +4,15 @@ import android.graphics.PointF
 import com.nanote.core.model.Command
 import com.nanote.core.model.DocumentModel
 import com.nanote.core.model.EraserMode
+import com.nanote.core.model.FingerAction
+import com.nanote.core.model.SelectionMode
+import com.nanote.core.model.ShapeRecognition
+import com.nanote.core.model.StrokeOps
 import com.nanote.core.model.isInkTool
 import com.nanote.core.model.HighlightAnnotation
 import com.nanote.core.model.ImageElement
 import com.nanote.core.model.ShapeElement
+import com.nanote.core.model.ShapeKind
 import com.nanote.core.model.Stroke
 import com.nanote.core.model.StrokePoint
 import com.nanote.core.model.StrikeThroughAnnotation
@@ -22,15 +27,25 @@ import com.nanote.core.pdf.PdfTextExtractor
 import com.nanote.core.pdf.PdfWord
 import com.nanote.core.common.AppLog
 import java.io.File
+import kotlin.math.atan2
+import kotlin.math.hypot
+import kotlin.math.max
+import kotlin.math.min
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 /**
- * Touch/pen input brain — one per canvas pane.
- * The view forwards raw gestures; this class turns them into strokes, erases,
- * shapes, selections and text actions, applying every mutation through the
- * undoable command pipeline.
+ * Touch/pen input brain — one per canvas pane (§1: input handling, editing).
+ *
+ * Part 2 responsibilities:
+ *  - per-tool stroke capture with pressure/tilt/timestamps + smoothing (§2/§4),
+ *  - configurable finger behavior & palm rejection policy (§5),
+ *  - stroke / object / partial eraser with geometry preservation (§6),
+ *  - lasso + rectangle geometric selection with move/resize/rotate (§11),
+ *  - copy/cut/paste + group/ungroup through the command pipeline (§8),
+ *  - deterministic shape recognition (§14),
+ *  - spatial-index backed broad-phase queries (§16).
  */
 class ToolController(
     val doc: DocumentModel,
@@ -56,6 +71,7 @@ class ToolController(
         private const val TAG = "ToolController"
         private const val MIN_POINT_DIST = 1.1f // world units
         private const val LASER_LIFE_MS = 700L
+        private const val HANDLE_HIT_RADIUS = 34f // screen px
     }
 
     // ------------- runtime config -------------
@@ -69,8 +85,17 @@ class ToolController(
     @Volatile
     var pressureEnabled: Boolean = true
 
+    /** Hard palm guard: ignore fingers while a stylus was recently active. */
     @Volatile
     var palmRejection: Boolean = true
+
+    /** §5 — what a finger does when no stylus is around. */
+    @Volatile
+    var fingerAction: FingerAction = FingerAction.SCROLL
+
+    /** Barrel-button held → the stylus temporarily erases. */
+    @Volatile
+    var tempEraserActive: Boolean = false
 
     /** doc page index → pdf page index, or -1 when the page is a plain note page. */
     var pdfPageOf: (Int) -> Int = { -1 }
@@ -81,11 +106,32 @@ class ToolController(
     val objectSelection = ObjectSelection()
     private var selectedIds: HashSet<String> = HashSet()
 
+    // ------------- spatial index (§16) -------------
+
+    private val index = SpatialIndex()
+    private var indexedRevision = -1L
+
+    /** Broad-phase candidates for a world rect (rebuilds the index when stale). */
+    fun strokesNear(l: Float, t: Float, r: Float, b: Float): List<Stroke> {
+        ensureIndex()
+        return index.query(l, t, r, b)
+    }
+
+    private fun ensureIndex() {
+        if (indexedRevision != doc.revision.value) {
+            index.rebuild(doc.strokes)
+            indexedRevision = doc.revision.value
+        }
+    }
+
     // ------------- live input state -------------
 
     private var livePoints: ArrayList<StrokePoint>? = null
     private var livePage = -1
     private var liveTool: ToolType = ToolType.PEN
+    private var liveWidth = 4f
+    private var liveVelocity = -1f
+    private var lastEventNanos = 0L
 
     private val erasedStrokes = ArrayList<Stroke>()
     private val eraserPathWorld = ArrayList<Float>()
@@ -95,14 +141,31 @@ class ToolController(
 
     private var lassoPoints: ArrayList<Float>? = null
 
+    /** RECTANGLE selection mode live rect [l, t, r, b] in world coords. */
+    var rectSelectionLive: FloatArray? = null
+        private set
+
     private var draggingTextHandle = 0 // 1 start, 2 end
 
     private var movingSelection = false
     private var scalingSelection = false
+    private var rotatingSelection = false
     private var moveLastWorld = PointF()
-    private var scaleStartDist = 0f
     private var scaleStartBBox: FloatArray? = null
+    private var scaleAnchorWorld = PointF()
+    private var scaleStartHandleWorld = PointF()
     private var scaleStartElements: List<Any> = emptyList()
+    private var rotateCenter = PointF()
+    private var rotateStartAngle = 0f
+
+    /** Scale factor for dragging from [start] relative to [anchor]; guards degenerate divides. */
+    private fun scaleAlong(pos: Float, anchor: Float, start: Float): Float {
+        val span = start - anchor
+        val denom = if (kotlin.math.abs(span) < 2f) 2f * if (span < 0) -1f else 1f else span
+        var f = (pos - anchor) / denom
+        if (kotlin.math.abs(f) < 0.05f) f = 0.05f * if (f < 0) -1f else 1f
+        return f.coerceIn(-8f, 8f)
+    }
 
     private var tapDownWorld = PointF()
     private var tapDownTime = 0L
@@ -119,7 +182,10 @@ class ToolController(
     // Input entry points (screen coords; world conversions via state)
     // =====================================================================
 
-    fun onActionDown(screenX: Float, screenY: Float, isStylus: Boolean, pressure: Float): Boolean {
+    fun onActionDown(
+        screenX: Float, screenY: Float, isStylus: Boolean, pressure: Float,
+        tilt: Float = 0f, eventNanos: Long = 0L
+    ): Boolean {
         movedBeyondSlop = false
         tapDownWorld.set(state.transform.screenToWorldX(screenX), state.transform.screenToWorldY(screenY))
         tapDownTime = System.currentTimeMillis()
@@ -137,14 +203,37 @@ class ToolController(
         if (objectSelection.isActive) {
             val bbox = objectSelection.bbox(doc, renderer) ?: run { objectSelection.clear(); syncSelectedIds(); listener.onObjectMenuVisibility(false); return false }
             val w = bboxWorldToScreen(bbox)
-            val corner = PointF(w[2], w[3])
-            if (distScreen(screenX, screenY, corner.x, corner.y) < 34f) {
-                scalingSelection = true
-                scaleStartBBox = bbox
-                scaleStartElements = objectSelection.items.map { it }
-                scaleStartDist = maxOf(kotlin.math.hypot(screenX - w[0], screenY - w[1]), 8f)
+
+            // rotation handle (above top-center)
+            val rotHx = (w[0] + w[2]) / 2f
+            val rotHy = w[1] - 46f
+            if (distScreen(screenX, screenY, rotHx, rotHy) < HANDLE_HIT_RADIUS) {
+                rotatingSelection = true
+                rotateCenter.set((bbox[0] + bbox[2]) / 2f, (bbox[1] + bbox[3]) / 2f)
+                rotateStartAngle = angleAt(screenX, screenY)
                 return true
             }
+
+            // corner resize handles: 0=TL 1=TR 2=BR 3=BL
+            val corners = arrayOf(
+                PointF(w[0], w[1]), PointF(w[2], w[1]),
+                PointF(w[2], w[3]), PointF(w[0], w[3])
+            )
+            for ((i, c) in corners.withIndex()) {
+                if (distScreen(screenX, screenY, c.x, c.y) < HANDLE_HIT_RADIUS) {
+                    scalingSelection = true
+                    scaleStartBBox = bbox
+                    // anchor = opposite corner (world)
+                    val opp = corners[(i + 2) % 4]
+                    scaleAnchorWorld.set(state.transform.screenToWorldX(opp.x), state.transform.screenToWorldY(opp.y))
+                    scaleStartHandleWorld.set(state.transform.screenToWorldX(c.x), state.transform.screenToWorldY(c.y))
+                    scaleStartElements = objectSelection.items.map { it }
+                    objectSelection.liveScaleX = 1f
+                    objectSelection.liveScaleY = 1f
+                    return true
+                }
+            }
+
             if (screenX >= w[0] - 16 && screenX <= w[2] + 16 && screenY >= w[1] - 16 && screenY <= w[3] + 16) {
                 movingSelection = true
                 moveLastWorld.set(tapDownWorld.x, tapDownWorld.y)
@@ -158,20 +247,20 @@ class ToolController(
             }
         }
 
-        val tool = activeTool
+        val tool = if (tempEraserActive && isStylus) ToolType.ERASER else activeTool
         val finger = !isStylus
 
-        // Fingers navigate (palm rejection): only stylus draws unless the user
-        // disabled palm rejection. Finger with ink tool → treat as scroll (view handles).
-        if (finger && palmRejection && (tool.isInkTool || tool == ToolType.ERASER ||
-                    tool == ToolType.SHAPE || tool == ToolType.LASSO || tool == ToolType.LASER)
-        ) {
+        // §5 finger policy: fingers only draw when explicitly configured to.
+        if (finger && tool.isInkTool && fingerAction == FingerAction.SCROLL) {
             return false // view: finger scroll/zoom
+        }
+        if (finger && fingerAction == FingerAction.IGNORE) {
+            return true // consume, do nothing
         }
 
         when (tool) {
-            ToolType.PEN, ToolType.PENCIL, ToolType.BRUSH, ToolType.HIGHLIGHTER -> {
-                beginStroke(tapDownWorld.x, tapDownWorld.y, pressure, tool)
+            ToolType.PEN, ToolType.PENCIL, ToolType.BRUSH, ToolType.HIGHLIGHTER, ToolType.FOUNTAIN -> {
+                beginStroke(tapDownWorld.x, tapDownWorld.y, pressure, tilt, eventNanos, tool)
                 return true
             }
             ToolType.ERASER -> {
@@ -189,8 +278,12 @@ class ToolController(
                 return true
             }
             ToolType.LASSO -> {
-                lassoPoints = ArrayList()
-                lassoPoints?.add(tapDownWorld.x); lassoPoints?.add(tapDownWorld.y)
+                if (toolConfig.selectionMode == SelectionMode.RECTANGLE) {
+                    rectSelectionLive = floatArrayOf(tapDownWorld.x, tapDownWorld.y, tapDownWorld.x, tapDownWorld.y)
+                } else {
+                    lassoPoints = ArrayList()
+                    lassoPoints?.add(tapDownWorld.x); lassoPoints?.add(tapDownWorld.y)
+                }
                 listener.invalidate()
                 return true
             }
@@ -216,10 +309,13 @@ class ToolController(
         }
     }
 
-    fun onActionMove(screenX: Float, screenY: Float, isStylus: Boolean, pressure: Float): Boolean {
+    fun onActionMove(
+        screenX: Float, screenY: Float, isStylus: Boolean, pressure: Float,
+        tilt: Float = 0f, eventNanos: Long = 0L
+    ): Boolean {
         val wx = state.transform.screenToWorldX(screenX)
         val wy = state.transform.screenToWorldY(screenY)
-        if (kotlin.math.hypot(wx - tapDownWorld.x, wy - tapDownWorld.y) > 6f / state.transform.scale) {
+        if (hypot(wx - tapDownWorld.x, wy - tapDownWorld.y) > 6f / state.transform.scale) {
             movedBeyondSlop = true
         }
 
@@ -234,18 +330,29 @@ class ToolController(
             listener.invalidate()
             return true
         }
-        if (scalingSelection) {
-            // live ghost handled in draw; store current scale factor
+        if (scalingSelection && scaleStartBBox != null) {
+            val sx = scaleAlong(wx, scaleAnchorWorld.x, scaleStartHandleWorld.x)
+            val sy = scaleAlong(wy, scaleAnchorWorld.y, scaleStartHandleWorld.y)
+            objectSelection.liveScaleX = sx
+            objectSelection.liveScaleY = sy
+            listener.invalidate()
+            return true
+        }
+        if (rotatingSelection) {
+            val a = angleAt(screenX, screenY)
+            objectSelection.liveRotation += (a - rotateStartAngle)
+            rotateStartAngle = a
+            listener.invalidate()
             return true
         }
 
         when {
             livePoints != null -> {
-                appendStrokePoint(wx, wy, pressure)
+                appendStrokePoint(wx, wy, pressure, tilt, eventNanos)
                 listener.invalidate()
                 return true
             }
-            activeTool == ToolType.ERASER && (isStylus || !palmRejection) -> {
+            activeTool == ToolType.ERASER && (isStylus || !palmRejection || fingerAction != FingerAction.SCROLL) -> {
                 eraseAt(wx, wy)
                 eraserPathWorld.add(wx); eraserPathWorld.add(wy)
                 listener.invalidate()
@@ -253,6 +360,12 @@ class ToolController(
             }
             shapeStart != null -> {
                 shapeCur = floatArrayOf(wx, wy)
+                listener.invalidate()
+                return true
+            }
+            rectSelectionLive != null -> {
+                val r = rectSelectionLive!!
+                r[2] = wx; r[3] = wy
                 listener.invalidate()
                 return true
             }
@@ -290,14 +403,19 @@ class ToolController(
             return true
         }
         if (scalingSelection) {
-            commitSelectionScale(screenX, screenY)
+            commitSelectionScale()
+            return true
+        }
+        if (rotatingSelection) {
+            commitSelectionRotation()
             return true
         }
 
         when {
             livePoints != null -> finishStroke()
-            activeTool == ToolType.ERASER && (isStylus || !palmRejection) -> finishEraser()
+            activeTool == ToolType.ERASER && (isStylus || !palmRejection || fingerAction != FingerAction.SCROLL) -> finishEraser()
             shapeStart != null -> finishShape()
+            rectSelectionLive != null -> finishRectSelection()
             lassoPoints != null -> finishLasso()
             currentLaser != null -> { currentLaser = null }
             activeTool == ToolType.SELECT_OBJECT && !movedBeyondSlop -> tapSelectObject(wx, wy)
@@ -324,47 +442,109 @@ class ToolController(
         return false
     }
 
+    private fun angleAt(screenX: Float, screenY: Float): Float =
+        atan2(screenY - state.transform.worldToScreenY(rotateCenter.y), screenX - state.transform.worldToScreenX(rotateCenter.x))
+
     // =====================================================================
-    // Stroke capture
+    // Stroke capture (§2 / §4)
     // =====================================================================
 
-    private fun beginStroke(wx: Float, wy: Float, pressure: Float, tool: ToolType) {
-        livePage = state.layout.pageAtY(wy)
-        if (livePage < 0) {
-            livePage = state.layout.nearestPage(wy)
-        }
+    private fun beginStroke(wx: Float, wy: Float, pressure: Float, tilt: Float, nanos: Long, tool: ToolType) {
+        livePage = pageForWorldY(wy)
         liveTool = tool
+        val style = toolConfig.inkStyleOf(tool)
+        liveWidth = style.width
         val p = if (pressureEnabled) pressure.coerceIn(0.05f, 1f) else 1f
-        livePoints = arrayListOf(StrokePoint(wx, wy, p))
+        lastEventNanos = nanos
+        liveVelocity = -1f
+        livePoints = arrayListOf(StrokePoint(wx, wy, p, tilt, nanos))
     }
 
-    private fun appendStrokePoint(wx: Float, wy: Float, pressure: Float) {
+    private fun appendStrokePoint(wx: Float, wy: Float, pressure: Float, tilt: Float, nanos: Long) {
         val pts = livePoints ?: return
         val last = pts.lastOrNull() ?: return
-        if (kotlin.math.hypot(wx - last.x, wy - last.y) < MIN_POINT_DIST && pts.size > 1) return
-        val p = if (pressureEnabled) pressure.coerceIn(0.05f, 1f) else 1f
+        if (hypot(wx - last.x, wy - last.y) < MIN_POINT_DIST && pts.size > 1) {
+            // still refresh pressure on the existing point (stylus pressure changes while hovering still)
+            if (pressureEnabled) {
+                pts[pts.size - 1] = last.copy(p = pressure.coerceIn(0.05f, 1f), tilt = tilt, t = nanos)
+            }
+            return
+        }
         if (pts.size >= 6000) return
-        pts.add(StrokePoint(wx, wy, p))
+
+        // live velocity (world units / second) for the fountain engine
+        val dt = if (nanos > 0 && last.t > 0) (nanos - last.t) else 0L
+        val d = hypot(wx - last.x, wy - last.y)
+        liveVelocity = if (dt > 0) d / dt * 1e9f else -1f
+
+        // light exponential smoothing while capturing (per-tool strength)
+        val style = toolConfig.inkStyleOf(liveTool)
+        var px = wx
+        var py = wy
+        if (style.smoothing > 0.05f && pts.isNotEmpty()) {
+            val smoothed = StrokeOps.smoothPoint(last.x, last.y, wx, wy, style.smoothing * 0.35f)
+            px = smoothed[0]; py = smoothed[1]
+        }
+        val p = if (pressureEnabled) pressure.coerceIn(0.05f, 1f) else 1f
+        pts.add(StrokePoint(px, py, p, tilt, nanos))
     }
 
     private fun finishStroke() {
-        val pts = livePoints ?: return
+        val raw = livePoints ?: return
         livePoints = null
-        if (pts.size < 1) return
+        if (raw.isEmpty()) return
         val cfg = toolConfig
-        val stroke = when (liveTool) {
-            ToolType.PEN -> Stroke(newId(), livePage, ToolType.PEN, cfg.penColor, cfg.penWidth, cfg.penOpacity, pts)
-            ToolType.PENCIL -> Stroke(newId(), livePage, ToolType.PENCIL, cfg.pencilColor, cfg.pencilWidth, cfg.pencilOpacity, pts)
-            ToolType.BRUSH -> Stroke(newId(), livePage, ToolType.BRUSH, cfg.brushColor, cfg.brushWidth, cfg.brushOpacity, pts)
-            ToolType.HIGHLIGHTER -> Stroke(newId(), livePage, ToolType.HIGHLIGHTER, cfg.highlighterColor, cfg.highlighterWidth, cfg.highlighterOpacity, pts)
-            else -> return
+        val style = cfg.inkStyleOf(liveTool)
+
+        // §14 — deterministic shape recognition on ink strokes
+        if (cfg.shapeRecognition && liveTool != ToolType.HIGHLIGHTER && raw.size >= 8) {
+            val recognized = ShapeRecognition.recognize(raw)
+            if (recognized != null && recognized.confidence >= ShapeRecognition.MIN_CONFIDENCE) {
+                val shape = ShapeElement(
+                    id = newId(),
+                    page = livePage,
+                    kind = recognized.kind,
+                    color = style.color,
+                    width = maxOf(2f, style.width * 0.9f),
+                    opacity = style.opacity,
+                    x1 = recognized.x1, y1 = recognized.y1, x2 = recognized.x2, y2 = recognized.y2,
+                    fillColor = cfg.shapeFillColor,
+                    filled = cfg.shapeFilled,
+                    vertices = recognized.vertices,
+                    timestamp = System.currentTimeMillis()
+                )
+                listener.commit(doc.addShapeCmd(shape))
+                listener.invalidate()
+                return
+            }
         }
+
+        // smoothing on commit (§4 natural interpolation)
+        val smoothed = StrokeOps.smoothCommitted(raw, style.smoothing)
+        val stroke = Stroke(
+            id = newId(),
+            page = livePage,
+            tool = liveTool,
+            color = style.color,
+            width = style.width,
+            opacity = style.opacity,
+            points = smoothed,
+            timestamp = System.currentTimeMillis(),
+            pressureResponse = style.pressureResponse
+        )
         listener.commit(doc.addStrokeCmd(stroke))
         listener.invalidate()
     }
 
+    private fun pageForWorldY(wy: Float): Int {
+        if (state.infiniteMode) return 0
+        val p = state.layout.pageAtY(wy)
+        if (p >= 0) return p
+        return state.layout.nearestPage(wy)
+    }
+
     // =====================================================================
-    // Eraser
+    // Eraser (§6)
     // =====================================================================
 
     private fun eraserRadiusWorld(): Float =
@@ -372,16 +552,19 @@ class ToolController(
 
     private fun eraseAt(wx: Float, wy: Float) {
         val r = eraserRadiusWorld()
+        val margin = r + 40f // widest stroke safety margin
         when (toolConfig.eraserMode) {
             EraserMode.STROKE, EraserMode.OBJECT -> {
-                for (s in doc.strokes) {
+                for (s in strokesNear(wx - margin, wy - margin, wx + margin, wy + margin)) {
                     if (s in erasedStrokes) continue
+                    if (s.page != pageForWorldY(wy) && !state.infiniteMode) continue
                     val hit = distToPolyline(wx, wy, s.points) < r + s.width / 2f
                     if (hit) erasedStrokes.add(s)
                 }
                 if (toolConfig.eraserMode == EraserMode.OBJECT) {
                     hitTextElement(wx, wy)?.let { if (it !in erasedTexts) erasedTexts.add(it) }
                     hitImageElement(wx, wy)?.let { if (it !in erasedImages) erasedImages.add(it) }
+                    hitShapeElement(wx, wy)?.let { if (it !in erasedShapes) erasedShapes.add(it) }
                     hitAnnotation(wx, wy)?.let {
                         when (it) {
                             is SelectedElement.SelHighlight -> if (it.ann !in erasedHighlights) erasedHighlights.add(it.ann)
@@ -398,6 +581,7 @@ class ToolController(
 
     private val erasedTexts = ArrayList<TextElement>()
     private val erasedImages = ArrayList<ImageElement>()
+    private val erasedShapes = ArrayList<ShapeElement>()
     private val erasedHighlights = ArrayList<HighlightAnnotation>()
     private val erasedUnderlines = ArrayList<UnderlineAnnotation>()
     private val erasedStrikeThroughs = ArrayList<StrikeThroughAnnotation>()
@@ -413,74 +597,95 @@ class ToolController(
                 if (erasedStrokes.isNotEmpty()) listener.commit(doc.removeStrokesCmd(ArrayList(erasedStrokes)))
                 if (erasedTexts.isNotEmpty()) listener.commit(doc.removeTextCmd(ArrayList(erasedTexts)))
                 if (erasedImages.isNotEmpty()) listener.commit(doc.removeImagesCmd(ArrayList(erasedImages)))
+                if (erasedShapes.isNotEmpty()) listener.commit(doc.removeShapesCmd(ArrayList(erasedShapes)))
                 if (erasedHighlights.isNotEmpty() || erasedUnderlines.isNotEmpty() || erasedStrikeThroughs.isNotEmpty()) {
                     listener.commit(doc.removeAnnotationsCmd(ArrayList(erasedHighlights), ArrayList(erasedUnderlines), ArrayList(erasedStrikeThroughs)))
                 }
-                erasedTexts.clear(); erasedImages.clear()
+                erasedTexts.clear(); erasedImages.clear(); erasedShapes.clear()
                 erasedHighlights.clear(); erasedUnderlines.clear(); erasedStrikeThroughs.clear()
             }
-            EraserMode.PIXEL -> {
-                val r = eraserRadiusWorld()
-                val touched = ArrayList<Stroke>()
-                for (s in doc.strokes) {
-                    // quick reject via path sample
-                    for (k in 0 until eraserPathWorld.size step 2) {
-                        if (distToPolyline(eraserPathWorld[k], eraserPathWorld[k + 1], s.points) < r + s.width / 2f) {
-                            touched.add(s); break
-                        }
-                    }
-                }
-                var changed = false
-                for (s in touched) {
-                    val replacements = splitStroke(s, r)
-                    if (replacements != null) {
-                        listener.commit(doc.replaceStrokeCmd(s, replacements))
-                        changed = true
-                    }
-                }
-                if (changed) listener.invalidate()
-            }
+            EraserMode.PIXEL -> partialErase()
         }
         erasedStrokes.clear()
         eraserPathWorld.clear()
     }
 
-    /** Splits a stroke removing points inside the eraser radius; null when unchanged. */
-    private fun splitStroke(s: Stroke, r: Float): List<Stroke>? {
-        val segments = ArrayList<List<StrokePoint>>()
-        var current = ArrayList<StrokePoint>()
-        for (p in s.points) {
-            // distance to eraser polyline
-            var inside = false
-            for (k in 0 until eraserPathWorld.size step 2) {
-                if (kotlin.math.hypot(p.x - eraserPathWorld[k], p.y - eraserPathWorld[k + 1]) < r) {
-                    inside = true; break
+    /**
+     * Partial erase: vector split with boundary interpolation (§6).
+     * Never rasterizes; remaining geometry (coords, pressure, tilt, timestamps)
+     * is preserved bit-exactly outside the erased capsules.
+     */
+    private fun partialErase() {
+        val r = eraserRadiusWorld()
+        if (eraserPathWorld.size < 2) return
+        val margin = r + 40f
+        val path = eraserPathWorld.toFloatArray()
+        var minX = Float.MAX_VALUE; var minY = Float.MAX_VALUE
+        var maxX = -Float.MAX_VALUE; var maxY = -Float.MAX_VALUE
+        var k = 0
+        while (k < path.size) {
+            minX = min(minX, path[k]); maxX = max(maxX, path[k])
+            minY = min(minY, path[k + 1]); maxY = max(maxY, path[k + 1])
+            k += 2
+        }
+        val candidates = strokesNear(minX - margin, minY - margin, maxX + margin, maxY + margin)
+        var changed = false
+        for (s in candidates) {
+            // sequentially split the stroke against every eraser capsule segment
+            var pieces: MutableList<Stroke> = arrayListOf(s)
+            var k2 = 0
+            while (k2 + 3 < path.size && pieces.isNotEmpty()) {
+                val ex0 = path[k2]; val ey0 = path[k2 + 1]
+                val ex1 = path[k2 + 2]; val ey1 = path[k2 + 3]
+                val next = ArrayList<Stroke>()
+                for (piece in pieces) {
+                    val kept = StrokeOps.splitStrokeAgainstCapsule(piece, ex0, ey0, ex1, ey1, r)
+                    if (kept == null) {
+                        next.add(piece)
+                    } else {
+                        for (seg in kept) {
+                            if (seg.size >= 2) {
+                                next.add(piece.copy(id = newId(), points = seg))
+                            }
+                        }
+                    }
                 }
+                pieces = next
+                k2 += 2
             }
-            if (!inside) current.add(p)
-            else if (current.isNotEmpty()) {
-                if (current.size >= 1) segments.add(current)
-                current = ArrayList()
+            if (pieces.size != 1 || pieces[0].id != s.id) {
+                listener.commit(doc.replaceStrokeCmd(s, pieces))
+                changed = true
             }
         }
-        if (current.isNotEmpty()) segments.add(current)
-        val kept = segments.filter { it.size >= 2 || (it.size == 1 && segments.size == 1) }
-        if (kept.size == 1 && kept[0].size == s.points.size) return null
-        return kept.map { seg -> s.copy(id = newId(), points = seg) }
+        if (changed) listener.invalidate()
     }
 
     // =====================================================================
-    // Shapes / lasso
+    // Shapes / lasso / rect selection (§11)
     // =====================================================================
 
     private fun finishShape() {
         val st = shapeStart ?: return
         val cur = shapeCur ?: run { shapeStart = null; return }
         shapeStart = null
-        val page = state.layout.pageAtY((st[1] + cur[1]) / 2f).let { if (it < 0) state.layout.nearestPage((st[1] + cur[1]) / 2f) else it }
+        val page = pageForWorldY((st[1] + cur[1]) / 2f)
         val cfg = toolConfig
-        if (kotlin.math.hypot(cur[0] - st[0], cur[1] - st[1]) > 4f / state.transform.scale) {
-            val shape = ShapeElement(newId(), page, cfg.shapeKind, cfg.shapeColor, cfg.shapeWidth, 100, st[0], st[1], cur[0], cur[1])
+        var ex = cur[0]
+        var ey = cur[1]
+        // §14 snap to geometry: 0/45/90° axes for lines/arrows
+        if (cfg.shapeSnap && (cfg.shapeKind == ShapeKind.LINE || cfg.shapeKind == ShapeKind.ARROW || cfg.shapeKind == ShapeKind.DOUBLE_ARROW)) {
+            val snapped = StrokeOps.snapDirectional(st[0], st[1], ex, ey)
+            ex = snapped[0]; ey = snapped[1]
+        }
+        if (hypot(ex - st[0], ey - st[1]) > 4f / state.transform.scale) {
+            val shape = ShapeElement(
+                id = newId(), page = page, kind = cfg.shapeKind,
+                color = cfg.shapeColor, width = cfg.shapeWidth, opacity = cfg.shapeOpacity,
+                x1 = st[0], y1 = st[1], x2 = ex, y2 = ey,
+                fillColor = cfg.shapeFillColor, filled = cfg.shapeFilled,
+                timestamp = System.currentTimeMillis()
+            )
             listener.commit(doc.addShapeCmd(shape))
         }
         shapeCur = null
@@ -493,20 +698,79 @@ class ToolController(
         val poly = pts.toFloatArray()
         val sel = ArrayList<SelectedElement>()
         var strokeCount = 0; var textCount = 0
-        for (s in doc.strokes) {
-            var inside = 0
-            for (p in s.points) if (pointInPolygon(p.x, p.y, poly)) inside++
-            if (inside >= s.points.size * 0.6f) { sel.add(SelectedElement.SelStroke(s)); strokeCount++ }
+        var minX = Float.MAX_VALUE; var minY = Float.MAX_VALUE
+        var maxX = -Float.MAX_VALUE; var maxY = -Float.MAX_VALUE
+        var k = 0
+        while (k < poly.size) {
+            minX = min(minX, poly[k]); maxX = max(maxX, poly[k])
+            minY = min(minY, poly[k + 1]); maxY = max(maxY, poly[k + 1])
+            k += 2
+        }
+        for (s in strokesNear(minX, minY, maxX, maxY)) {
+            val geometric = StrokeOps.strokeIntersectsPolygon(s, poly)
+            if (geometric) {
+                // include whole group when the stroke is grouped
+                if (s.groupId != null) {
+                    addGroupMembers(s.groupId!!, sel)
+                } else {
+                    sel.add(SelectedElement.SelStroke(s))
+                }
+                strokeCount++
+            }
         }
         for (t in doc.texts) {
-            if (pointInPolygon(t.x + t.width / 2, t.y + 10, poly)) { sel.add(SelectedElement.SelText(t)); textCount++ }
+            val h = renderer.measureTextHeight(t).toFloat()
+            if (rectIntersectsPolygon(floatArrayOf(t.x, t.y, t.x + t.width, t.y + h), poly)) {
+                if (t.groupId != null) addGroupMembers(t.groupId!!, sel) else sel.add(SelectedElement.SelText(t))
+                textCount++
+            }
         }
         for (i in doc.images) {
-            if (pointInPolygon(i.x + i.w / 2, i.y + i.h / 2, poly)) sel.add(SelectedElement.SelImage(i))
+            if (rectIntersectsPolygon(floatArrayOf(i.x, i.y, i.x + i.w, i.y + i.h), poly)) {
+                if (i.groupId != null) addGroupMembers(i.groupId!!, sel) else sel.add(SelectedElement.SelImage(i))
+            }
         }
         for (sh in doc.shapes) {
-            if (pointInPolygon((sh.x1 + sh.x2) / 2, (sh.y1 + sh.y2) / 2, poly)) sel.add(SelectedElement.SelShape(sh))
+            if (rectIntersectsPolygon(sh.bbox(), poly)) {
+                if (sh.groupId != null) addGroupMembers(sh.groupId!!, sel) else sel.add(SelectedElement.SelShape(sh))
+            }
         }
+        finishSelectionBuild(sel, strokeCount, textCount)
+    }
+
+    private fun finishRectSelection() {
+        val r = rectSelectionLive ?: return
+        rectSelectionLive = null
+        val rect = floatArrayOf(min(r[0], r[2]), min(r[1], r[3]), max(r[0], r[2]), max(r[1], r[3]))
+        val sel = ArrayList<SelectedElement>()
+        var strokeCount = 0; var textCount = 0
+        for (s in strokesNear(rect[0], rect[1], rect[2], rect[3])) {
+            if (StrokeOps.strokeIntersectsRect(s, rect)) {
+                if (s.groupId != null) addGroupMembers(s.groupId!!, sel) else sel.add(SelectedElement.SelStroke(s))
+                strokeCount++
+            }
+        }
+        for (t in doc.texts) {
+            val h = renderer.measureTextHeight(t).toFloat()
+            if (rectsOverlap(floatArrayOf(t.x, t.y, t.x + t.width, t.y + h), rect)) {
+                if (t.groupId != null) addGroupMembers(t.groupId!!, sel) else sel.add(SelectedElement.SelText(t))
+                textCount++
+            }
+        }
+        for (i in doc.images) {
+            if (rectsOverlap(floatArrayOf(i.x, i.y, i.x + i.w, i.y + i.h), rect)) {
+                if (i.groupId != null) addGroupMembers(i.groupId!!, sel) else sel.add(SelectedElement.SelImage(i))
+            }
+        }
+        for (sh in doc.shapes) {
+            if (rectsOverlap(sh.bbox(), rect)) {
+                if (sh.groupId != null) addGroupMembers(sh.groupId!!, sel) else sel.add(SelectedElement.SelShape(sh))
+            }
+        }
+        finishSelectionBuild(sel, strokeCount, textCount)
+    }
+
+    private fun finishSelectionBuild(sel: List<SelectedElement>, strokeCount: Int, textCount: Int) {
         if (sel.isNotEmpty()) {
             objectSelection.set(sel)
             syncSelectedIds()
@@ -515,27 +779,75 @@ class ToolController(
         }
     }
 
+    /** Pulls in every element sharing [groupId] (group selection semantics). */
+    private fun addGroupMembers(groupId: String, out: ArrayList<SelectedElement>) {
+        for (s in doc.strokes) if (s.groupId == groupId && out.none { it is SelectedElement.SelStroke && it.stroke.id == s.id }) out.add(SelectedElement.SelStroke(s))
+        for (t in doc.texts) if (t.groupId == groupId && out.none { it is SelectedElement.SelText && it.text.id == t.id }) out.add(SelectedElement.SelText(t))
+        for (i in doc.images) if (i.groupId == groupId && out.none { it is SelectedElement.SelImage && it.image.id == i.id }) out.add(SelectedElement.SelImage(i))
+        for (sh in doc.shapes) if (sh.groupId == groupId && out.none { it is SelectedElement.SelShape && it.shape.id == sh.id }) out.add(SelectedElement.SelShape(sh))
+    }
+
+    private fun rectIntersectsPolygon(rect: FloatArray, poly: FloatArray): Boolean {
+        // any rect corner inside, or any rect edge crossing a polygon edge
+        if (pointInPolygon(rect[0], rect[1], poly)) return true
+        if (pointInPolygon(rect[2], rect[1], poly)) return true
+        if (pointInPolygon(rect[2], rect[3], poly)) return true
+        if (pointInPolygon(rect[0], rect[3], poly)) return true
+        val edges = arrayOf(
+            floatArrayOf(rect[0], rect[1], rect[2], rect[1]),
+            floatArrayOf(rect[2], rect[1], rect[2], rect[3]),
+            floatArrayOf(rect[2], rect[3], rect[0], rect[3]),
+            floatArrayOf(rect[0], rect[3], rect[0], rect[1])
+        )
+        val n = poly.size / 2
+        for (e in edges) {
+            for (i in 0 until n) {
+                val j = (i + 1) % n
+                if (StrokeOps.segmentsIntersect(e[0], e[1], e[2], e[3], poly[i * 2], poly[i * 2 + 1], poly[j * 2], poly[j * 2 + 1])) return true
+            }
+        }
+        return false
+    }
+
+    private fun rectsOverlap(a: FloatArray, b: FloatArray): Boolean =
+        a[0] <= b[2] && a[2] >= b[0] && a[1] <= b[3] && a[3] >= b[1]
+
     private fun tapSelectObject(wx: Float, wy: Float) {
         // annotation hit first (topmost interaction layer)
         hitAnnotation(wx, wy)?.let {
             selectItems(listOf(it)); return
         }
-        hitImageElement(wx, wy)?.let { selectItems(listOf(SelectedElement.SelImage(it))); return }
-        hitTextElement(wx, wy)?.let { selectItems(listOf(SelectedElement.SelText(it))); return }
+        hitImageElement(wx, wy)?.let { selectWithGroup(it.groupId) { selectItems(listOf(SelectedElement.SelImage(it))) }; return }
+        hitTextElement(wx, wy)?.let { selectWithGroup(it.groupId) { selectItems(listOf(SelectedElement.SelText(it))) }; return }
+        hitShapeElement(wx, wy)?.let { selectWithGroup(it.groupId) { selectItems(listOf(SelectedElement.SelShape(it))) }; return }
         // strokes last (topmost drawing)
         val hits = ArrayList<SelectedElement>()
-        for (s in doc.strokes) {
-            if (distToPolyline(wx, wy, s.points) < s.width / 2f + 6f / state.transform.scale) {
+        val tolerance = 8f / state.transform.scale
+        for (s in strokesNear(wx - 60f, wy - 60f, wx + 60f, wy + 60f)) {
+            if (distToPolyline(wx, wy, s.points) < s.width / 2f + tolerance) {
                 hits.add(SelectedElement.SelStroke(s))
             }
         }
         if (hits.isNotEmpty()) {
-            selectItems(hits.takeLast(1)) // topmost stroke
+            val topmost = hits.last().let { if (it is SelectedElement.SelStroke) it.stroke else return }
+            selectWithGroup(topmost.groupId) { selectItems(listOf(SelectedElement.SelStroke(topmost))) }
             return
         }
         objectSelection.clear()
         syncSelectedIds()
         listener.onObjectMenuVisibility(false)
+    }
+
+    private inline fun selectWithGroup(groupId: String?, crossinline plain: () -> Unit) {
+        if (groupId != null) {
+            val sel = ArrayList<SelectedElement>()
+            addGroupMembers(groupId, sel)
+            if (sel.isNotEmpty()) {
+                selectItems(sel)
+                return
+            }
+        }
+        plain()
     }
 
     private fun selectItems(items: List<SelectedElement>) {
@@ -570,7 +882,7 @@ class ToolController(
     fun imageResolverFor(relPath: String): File? = imageResolver(relPath)
 
     // =====================================================================
-    // Object move / scale commits
+    // Selection move / scale / rotate commits (§11)
     // =====================================================================
 
     private fun commitSelectionMove() {
@@ -600,55 +912,216 @@ class ToolController(
         listener.invalidate()
     }
 
-    private fun commitSelectionScale(screenX: Float, screenY: Float) {
+    private fun commitSelectionScale() {
         scalingSelection = false
         val bbox = scaleStartBBox
-        if (bbox != null) {
-            val w = bboxWorldToScreen(bbox)
-            val dist = maxOf(kotlin.math.hypot(screenX - w[0], screenY - w[1]), 8f)
-            val factor = (dist / scaleStartDist).coerceIn(0.1f, 20f)
-            applyScale(factor, bbox)
-        }
+        val sx = objectSelection.liveScaleX
+        val sy = objectSelection.liveScaleY
+        objectSelection.liveScaleX = 1f; objectSelection.liveScaleY = 1f
         scaleStartBBox = null
         scaleStartElements = emptyList()
+        if (bbox == null) return
+        if (kotlin.math.abs(sx - 1f) < 0.01f && kotlin.math.abs(sy - 1f) < 0.01f) return
+        applySelectionScale(sx, sy, scaleAnchorWorld.x, scaleAnchorWorld.y)
         listener.invalidate()
     }
 
-    private fun applyScale(factor: Float, bbox: FloatArray) {
-        val cx = (bbox[0] + bbox[2]) / 2f
-        val cy = (bbox[1] + bbox[3]) / 2f
+    /** Scales every selected element about (ax, ay) — strokes included (§8 resize). */
+    fun applySelectionScale(sx: Float, sy: Float, ax: Float, ay: Float) {
+        val strokePairs = ArrayList<Pair<Stroke, Stroke>>()
+        val textPairs = ArrayList<Pair<TextElement, TextElement>>()
+        val shapePairs = ArrayList<Pair<ShapeElement, ShapeElement>>()
+        val imagePairs = ArrayList<Pair<ImageElement, ImageElement>>()
         for (it in objectSelection.items) {
             when (it) {
-                is SelectedElement.SelImage -> {
-                    val img = it.image
-                    val nw = img.w * factor
-                    val nh = img.h * factor
-                    val nx = cx - (cx - img.x) * factor
-                    val ny = cy - (cy - img.y) * factor
-                    listener.commit(doc.transformImageCmd(img, img.copy(x = nx, y = ny, w = nw, h = nh)))
-                }
+                is SelectedElement.SelStroke -> strokePairs.add(it.stroke to StrokeOps.scaleStroke(it.stroke, ax, ay, sx, sy))
                 is SelectedElement.SelText -> {
                     val t = it.text
-                    listener.commit(doc.updateTextCmd(t, t.copy(
-                        x = cx - (cx - t.x) * factor,
-                        y = cy - (cy - t.y) * factor,
-                        size = t.size * factor,
-                        width = t.width * factor
-                    )))
+                    textPairs.add(t to t.copy(
+                        x = ax + (t.x - ax) * sx,
+                        y = ay + (t.y - ay) * sy,
+                        size = (t.size * ((sx + sy) / 2f)).coerceIn(4f, 400f),
+                        width = (t.width * sx).coerceAtLeast(24f)
+                    ))
                 }
                 is SelectedElement.SelShape -> {
                     val s = it.shape
-                    listener.commit(doc.addShapeCmdScaled(s, cx, cy, factor))
+                    shapePairs.add(s to s.copy(
+                        x1 = ax + (s.x1 - ax) * sx, y1 = ay + (s.y1 - ay) * sy,
+                        x2 = ax + (s.x2 - ax) * sx, y2 = ay + (s.y2 - ay) * sy,
+                        width = (s.width * ((sx + sy) / 2f)).coerceIn(0.2f, 200f)
+                    ))
+                }
+                is SelectedElement.SelImage -> {
+                    val i = it.image
+                    imagePairs.add(i to i.copy(
+                        x = ax + (i.x - ax) * sx, y = ay + (i.y - ay) * sy,
+                        w = (i.w * sx).coerceAtLeast(8f), h = (i.h * sy).coerceAtLeast(8f)
+                    ))
                 }
                 else -> {}
             }
         }
+        if (strokePairs.isNotEmpty()) listener.commit(doc.transformStrokesCmd(strokePairs))
+        if (textPairs.isNotEmpty()) listener.commit(doc.transformTextsCmd(textPairs))
+        if (shapePairs.isNotEmpty()) listener.commit(doc.transformShapesCmd(shapePairs))
+        if (imagePairs.isNotEmpty()) listener.commit(doc.transformImagesCmd(imagePairs))
+    }
+
+    private fun commitSelectionRotation() {
+        rotatingSelection = false
+        val angle = objectSelection.liveRotation
+        objectSelection.liveRotation = 0f
+        if (kotlin.math.abs(angle) < 0.5f) return
+        applySelectionRotation(rotateCenter.x, rotateCenter.y, angle)
+        listener.invalidate()
+    }
+
+    /** Rotates every selected element about (cx, cy) — strokes included (§8 rotate). */
+    fun applySelectionRotation(cx: Float, cy: Float, angleDeg: Float) {
+        val strokePairs = ArrayList<Pair<Stroke, Stroke>>()
+        val textPairs = ArrayList<Pair<TextElement, TextElement>>()
+        val shapePairs = ArrayList<Pair<ShapeElement, ShapeElement>>()
+        val imagePairs = ArrayList<Pair<ImageElement, ImageElement>>()
+        for (it in objectSelection.items) {
+            when (it) {
+                is SelectedElement.SelStroke -> strokePairs.add(it.stroke to StrokeOps.rotateStroke(it.stroke, cx, cy, angleDeg))
+                is SelectedElement.SelText -> textPairs.add(it.text to it.text.copy(rotation = it.text.rotation + angleDeg))
+                is SelectedElement.SelShape -> shapePairs.add(it.shape to it.shape.copy(rotation = it.shape.rotation + angleDeg))
+                is SelectedElement.SelImage -> imagePairs.add(it.image to it.image.copy(rotation = it.image.rotation + angleDeg))
+                else -> {}
+            }
+        }
+        if (strokePairs.isNotEmpty()) listener.commit(doc.transformStrokesCmd(strokePairs))
+        if (textPairs.isNotEmpty()) listener.commit(doc.transformTextsCmd(textPairs))
+        if (shapePairs.isNotEmpty()) listener.commit(doc.transformShapesCmd(shapePairs))
+        if (imagePairs.isNotEmpty()) listener.commit(doc.transformImagesCmd(imagePairs))
     }
 
     private fun bboxWorldToScreen(b: FloatArray): FloatArray = floatArrayOf(
         state.transform.worldToScreenX(b[0]), state.transform.worldToScreenY(b[1]),
         state.transform.worldToScreenX(b[2]), state.transform.worldToScreenY(b[3])
     )
+
+    /** Live-transform pivots exposed for the view's ghost rendering (§11). */
+    val ghostAnchor: PointF get() = scaleAnchorWorld
+    val ghostRotateCenter: PointF get() = rotateCenter
+
+    // =====================================================================
+    // Clipboard + grouping (§8)
+    // =====================================================================
+
+    /** True when the current selection can be grouped (2+ ungrouped elements). */
+    val canGroup: Boolean
+        get() = objectSelection.items.size >= 2 && objectSelection.items.any { groupOf(it) == null }
+
+    /** True when the current selection contains at least one grouped element. */
+    val canUngroup: Boolean
+        get() = objectSelection.items.any { groupOf(it) != null }
+
+    private fun groupOf(item: SelectedElement): String? = when (item) {
+        is SelectedElement.SelStroke -> item.stroke.groupId
+        is SelectedElement.SelText -> item.text.groupId
+        is SelectedElement.SelImage -> item.image.groupId
+        is SelectedElement.SelShape -> item.shape.groupId
+        else -> null
+    }
+
+    fun groupSelection(): Boolean {
+        if (!canGroup) return false
+        val sIds = HashSet<String>(); val tIds = HashSet<String>()
+        val iIds = HashSet<String>(); val shIds = HashSet<String>()
+        for (it in objectSelection.items) {
+            when (it) {
+                is SelectedElement.SelStroke -> sIds.add(it.stroke.id)
+                is SelectedElement.SelText -> tIds.add(it.text.id)
+                is SelectedElement.SelImage -> iIds.add(it.image.id)
+                is SelectedElement.SelShape -> shIds.add(it.shape.id)
+                else -> {}
+            }
+        }
+        listener.commit(doc.groupCmd(sIds, tIds, iIds, shIds))
+        listener.invalidate()
+        return true
+    }
+
+    fun ungroupSelection(): Boolean {
+        val gid = objectSelection.items.firstNotNullOfOrNull { groupOf(it) } ?: return false
+        listener.commit(doc.ungroupCmd(gid))
+        listener.invalidate()
+        return true
+    }
+
+    /** Copies the object selection into the process-wide clipboard (§8). */
+    fun copySelectionObjects(docId: String): Boolean {
+        if (!objectSelection.isActive) return false
+        val ss = ArrayList<Stroke>(); val ts = ArrayList<TextElement>()
+        val imgs = ArrayList<ImageElement>(); val shs = ArrayList<ShapeElement>()
+        for (it in objectSelection.items) {
+            when (it) {
+                is SelectedElement.SelStroke -> ss.add(it.stroke)
+                is SelectedElement.SelText -> ts.add(it.text)
+                is SelectedElement.SelImage -> imgs.add(it.image)
+                is SelectedElement.SelShape -> shs.add(it.shape)
+                else -> {}
+            }
+        }
+        if (ss.isEmpty() && ts.isEmpty() && imgs.isEmpty() && shs.isEmpty()) return false
+        EditorClipboard.copy(EditorClipboard.Elements(docId, ss, ts, imgs, shs))
+        return true
+    }
+
+    /** Copy + delete in one step (§8 cut). */
+    fun cutSelectionObjects(docId: String): Boolean {
+        val copied = copySelectionObjects(docId)
+        if (copied) deleteSelection()
+        return copied
+    }
+
+    /**
+     * Pastes the clipboard centered on the current viewport (§8).
+     * Images from another document are dropped (files are doc-scoped).
+     */
+    fun pasteClipboard(docId: String): Boolean {
+        val clip = EditorClipboard.content ?: return false
+        if (clip.isEmpty) return false
+        val focusWorldX = state.transform.screenToWorldX(state.viewportWidth / 2f)
+        val focusWorldY = state.transform.screenToWorldY(state.viewportHeight / 2f)
+
+        // bbox of clipboard content (for re-centering)
+        var minX = Float.MAX_VALUE; var minY = Float.MAX_VALUE
+        var maxX = -Float.MAX_VALUE; var maxY = -Float.MAX_VALUE
+        for (s in clip.strokes) { val b = s.bbox(); minX = min(minX, b[0]); minY = min(minY, b[1]); maxX = max(maxX, b[2]); maxY = max(maxY, b[3]) }
+        for (t in clip.texts) { val h = renderer.measureTextHeight(t).toFloat(); minX = min(minX, t.x); minY = min(minY, t.y); maxX = max(maxX, t.x + t.width); maxY = max(maxY, t.y + h) }
+        for (i in clip.images) { minX = min(minX, i.x); minY = min(minY, i.y); maxX = max(maxX, i.x + i.w); maxY = max(maxY, i.y + i.h) }
+        for (s in clip.shapes) { val b = s.bbox(); minX = min(minX, b[0]); minY = min(minY, b[1]); maxX = max(maxX, b[2]); maxY = max(maxY, b[3]) }
+        if (minX > maxX) return false
+        val dx = focusWorldX - (minX + maxX) / 2f
+        val dy = focusWorldY - (minY + maxY) / 2f
+        val page = pageForWorldY(focusWorldY)
+
+        val newStrokes = clip.strokes.map { it.copy(id = newId(), page = page, timestamp = System.currentTimeMillis(), groupId = null, points = it.points.map { p -> p.copy(x = p.x + dx, y = p.y + dy) }) }
+        val newTexts = clip.texts.map { it.copy(id = newId(), page = page, x = it.x + dx, y = it.y + dy, groupId = null, timestamp = System.currentTimeMillis()) }
+        val newImages = if (clip.docId == docId) {
+            clip.images.map { it.copy(id = newId(), page = page, x = it.x + dx, y = it.y + dy, groupId = null) }
+        } else {
+            emptyList() // cross-document image paste needs file copies — dropped for now
+        }
+        val newShapes = clip.shapes.map { it.copy(id = newId(), page = page, x1 = it.x1 + dx, y1 = it.y1 + dy, x2 = it.x2 + dx, y2 = it.y2 + dy, groupId = null, timestamp = System.currentTimeMillis()) }
+
+        listener.commit(doc.addElementsCmd(newStrokes, newTexts, newImages, newShapes))
+        // select the pasted content
+        val sel = ArrayList<SelectedElement>()
+        for (s in newStrokes) sel.add(SelectedElement.SelStroke(s))
+        for (t in newTexts) sel.add(SelectedElement.SelText(t))
+        for (i in newImages) sel.add(SelectedElement.SelImage(i))
+        for (s in newShapes) sel.add(SelectedElement.SelShape(s))
+        objectSelection.set(sel)
+        syncSelectedIds()
+        listener.onObjectMenuVisibility(true)
+        listener.invalidate()
+        return true
+    }
 
     fun deleteSelection() {
         val strokes = ArrayList<Stroke>()
@@ -853,11 +1326,11 @@ class ToolController(
     }
 
     // =====================================================================
-    // Text insertion
+    // Text insertion (§12)
     // =====================================================================
 
     private fun tapInsertText(wx: Float, wy: Float, sticky: Boolean) {
-        val page = state.layout.pageAtY(wy).let { if (it < 0) state.layout.nearestPage(wy) else it }
+        val page = pageForWorldY(wy)
         hitTextElement(wx, wy)?.let { existing ->
             listener.onInsertTextRequest(page, wx, wy, existing, sticky)
             return
@@ -865,14 +1338,34 @@ class ToolController(
         listener.onInsertTextRequest(page, wx, wy, null, sticky)
     }
 
-    fun commitText(existing: TextElement?, page: Int, wx: Float, wy: Float, text: String, sticky: Boolean, size: Float, color: Long) {
-        if (existing != null) {
-            listener.commit(doc.updateTextCmd(existing, existing.copy(text = text, size = size, color = color, sticky = sticky)))
+    fun commitText(existing: TextElement?, page: Int, wx: Float, wy: Float, text: String, sticky: Boolean, size: Float, color: Long): Command? {
+        return if (existing != null) {
+            val cmd = doc.updateTextCmd(existing, existing.copy(text = text, size = size, color = color, sticky = sticky))
+            listener.commit(cmd)
+            cmd
         } else if (text.isNotBlank()) {
-            val el = TextElement(newId(), page, text, wx, wy, size, color, sticky, if (sticky) 220f else 300f)
-            listener.commit(doc.addTextCmd(el))
-        }
+            val el = TextElement(newId(), page, text, wx, wy, size, color, sticky, if (sticky) 220f else 300f, timestamp = System.currentTimeMillis())
+            val cmd = doc.addTextCmd(el)
+            listener.commit(cmd)
+            cmd
+        } else null
+    }
+
+    /** §12 — full rich-text commit: every editable property at once. */
+    fun commitTextEdit(existing: TextElement, updated: TextElement): Command? {
+        val cmd = doc.updateTextCmd(existing, updated)
+        listener.commit(cmd)
         listener.invalidate()
+        return cmd
+    }
+
+    /** §12 — inserts a fully configured text element. */
+    fun commitTextInsert(el: TextElement): Command? {
+        if (el.text.isBlank()) return null
+        val cmd = doc.addTextCmd(el)
+        listener.commit(cmd)
+        listener.invalidate()
+        return cmd
     }
 
     // =====================================================================
@@ -883,6 +1376,14 @@ class ToolController(
         for (t in doc.texts) {
             val h = renderer.measureTextHeight(t).toFloat()
             if (wx >= t.x && wx <= t.x + t.width + 8 && wy >= t.y - 4 && wy <= t.y + h + 4) return t
+        }
+        return null
+    }
+
+    private fun hitShapeElement(wx: Float, wy: Float): ShapeElement? {
+        for (s in doc.shapes) {
+            val b = s.bbox()
+            if (wx >= b[0] - 4 && wx <= b[2] + 4 && wy >= b[1] - 4 && wy <= b[3] + 4) return s
         }
         return null
     }
@@ -937,7 +1438,7 @@ class ToolController(
     }
 
     private fun distScreen(x1: Float, y1: Float, x2: Float, y2: Float): Float =
-        kotlin.math.hypot(x1 - x2, y1 - y2)
+        hypot(x1 - x2, y1 - y2)
 
     // =====================================================================
     // Laser lifecycle
@@ -968,6 +1469,10 @@ class ToolController(
 
     val liveStrokePoints: List<StrokePoint>? get() = livePoints
     val liveStrokeTool: ToolType get() = liveTool
+    val liveStrokeWidth: Float get() = liveWidth
+    val liveStrokeVelocity: Float get() = liveVelocity
+    val livePressureResponse: Float
+        get() = toolConfig.inkStyleOf(liveTool).pressureResponse
     val currentShapeStart: FloatArray? get() = shapeStart
     val currentShapeEnd: FloatArray? get() = shapeCur
     val currentLasso: ArrayList<Float>? get() = lassoPoints

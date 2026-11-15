@@ -174,5 +174,90 @@
     <string name="ok">حسنًا</string>
     <string name="close">إغلاق</string>
     <string name="insert_text_hint">اكتب هنا…</string>
-    <string name="text_layer_building">جارٍ تحضير النص…</string>
+    <string name="text_layer_building">جارٍ تجهيز النص…</string>
+
+    <!-- Part 2: pen tools & customization -->
+    <string name="tool_fountain">قلم حبر</string>
+    <string name="pressure_response">استجابة الضغط</string>
+    <string name="smoothing">التنعيم</string>
+    <string name="recent_colors">الألوان الحديثة</string>
+    <string name="favorite_colors">المفضلة</string>
+    <string name="favorite_color">إضافة للمفضلة</string>
+    <string name="unfavorite_color">إزالة من المفضلة</string>
+    <string name="presets_section">الإعدادات المحفوظة</string>
+    <string name="no_presets_yet">لا توجد إعدادات محفوظة بعد</string>
+    <string name="save">حفظ</string>
+    <string name="no_settings">لا توجد إعدادات لهذه الأداة</string>
+
+    <!-- Part 2: eraser -->
+    <string name="eraser_mode">وضع الممحاة</string>
+    <string name="eraser_stroke">ممحاة الجُمل</string>
+    <string name="eraser_object">ممحاة الكائنات</string>
+    <string name="eraser_area">ممحاة جزئية</string>
+
+    <!-- Part 2: shapes -->
+    <string name="shape_kind">الشكل</string>
+    <string name="shape_double_arrow">سهم مزدوج</string>
+    <string name="shape_rounded_rect">مستطيل دائري</string>
+    <string name="shape_ellipse">قطع ناقص</string>
+    <string name="shape_polygon">مضلع</string>
+    <string name="filled_shape">معبأ</string>
+    <string name="snap_to_geometry">الالتزام بالأشكال الهندسية</string>
+    <string name="shape_recognition">التعرف على الأشكال</string>
+
+    <!-- Part 2: selection operations -->
+    <string name="copy">نسخ</string>
+    <string name="cut">قص</string>
+    <string name="paste">لصق</string>
+    <string name="group_selection">تجميع</string>
+    <string name="ungroup_selection">فك التجميع</string>
+
+    <!-- Part 2: page management -->
+    <string name="page_menu_title">صفحة %1$d</string>
+    <string name="page_rename">إعادة تسمية الصفحة</string>
+    <string name="page_duplicate">تكرار الصفحة</string>
+    <string name="page_delete">حذف الصفحة</string>
+    <string name="page_move_up">نقل لأعلى</string>
+    <string name="page_move_down">نقل لأسفل</string>
+    <string name="page_template">قالب الصفحة</string>
+    <string name="page_size">مقاس الصفحة</string>
+    <string name="template_blank">سادة</string>
+    <string name="template_ruled">مسطر</string>
+    <string name="template_college_ruled">مسطر جامعي</string>
+    <string name="template_wide_ruled">مسطر عريض</string>
+    <string name="template_grid">مربعات</string>
+    <string name="template_small_grid">مربعات صغيرة</string>
+    <string name="template_dotted">منقط</string>
+    <string name="template_cornell">كورنيل</string>
+    <string name="template_music">نوتة موسيقية</string>
+    <string name="template_planner">مخطط يومي</string>
+    <string name="template_todo">قائمة مهام</string>
+    <string name="template_custom">مخصص</string>
+    <string name="template_keep_note">تغيير القالب لا يؤثر على كتابتك إطلاقاً</string>
+    <string name="orientation_landscape">أفقي</string>
+    <string name="orientation_portrait">عمودي</string>
+
+    <!-- Part 2: canvas modes -->
+    <string name="switch_to_infinite">التبديل للوحة اللانهائية</string>
+    <string name="switch_to_paged">التبديل للصفحات الثابتة</string>
+
+    <!-- Part 2: rich text -->
+    <string name="font_default">افتراضي</string>
+    <string name="font_serif">مذيّل</string>
+    <string name="font_mono">أحادي</string>
+    <string name="font_casual">غير رسمي</string>
+    <string name="font_cursive">متصل</string>
+    <string name="font_sans">بدون تذييل</string>
+    <string name="bold">عريض</string>
+    <string name="italic">مائل</string>
+    <string name="underline">تسطير</string>
+    <string name="strikethrough">يتوسطه خط</string>
+    <string name="align_start">للبداية</string>
+    <string name="align_center">توسيط</string>
+    <string name="align_end">للنهاية</string>
+    <string name="list_bullet">قائمة نقطية</string>
+    <string name="list_numbered">قائمة مرقمة</string>
+    <string name="font_size">الحجم</string>
+    <string name="text_color">لون النص</string>
+    <string name="background_color">الخلفية</string>
 </resources>

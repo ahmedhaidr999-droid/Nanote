@@ -10,3 +10,9 @@ build/
 .cxx
 .kotlin/
 local.properties
+
+# Release signing — never commit keystores or credentials (see documentation/RELEASE.md)
+keystore/
+*.keystore
+*.jks
+keystore.properties

@@ -204,6 +204,11 @@ class SettingsViewModel @Inject constructor(
     fun dismissMessage() {
         _backupMessage.value = null
     }
+    fun setFingerAction(action: com.nanote.core.model.FingerAction) =
+        editorSettings.setFingerAction(action)
+
+    fun setPressureCurve(curve: com.nanote.core.model.PressureCurve) =
+        editorSettings.setPressureCurve(curve)
 
     // ------------------------------------------------------------- storage
 
