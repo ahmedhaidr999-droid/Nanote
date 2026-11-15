@@ -116,7 +116,7 @@ class BackupFormatTest {
             )
             val archiveFile = File(dir, "future.nanote-backup")
             assertTrue(
-                BackupFormat.write(archiveFile.outputStream(), BackupRows(), manifest) { }
+                BackupFormat.write(archiveFile.outputStream(), BackupRows(), manifest, { null }) { }
             )
             ZipFile(archiveFile).use { zip ->
                 assertNull(BackupFormat.readManifest(zip))

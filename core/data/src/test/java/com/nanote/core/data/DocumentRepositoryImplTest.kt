@@ -238,7 +238,7 @@ class DocumentRepositoryImplTest {
 
     @Test
     fun tags_assignObserveAndDelete() = runBlocking {
-        val a = repo.createNotebook(CreateNotebookRequest(title = "Lecture A"))
+        val a = repo.createNotebook(CreateNotebookRequest(title = "Physics 101"))
         val b = repo.createNotebook(CreateNotebookRequest(title = "Lecture B"))
         repo.setDocumentTags(a, listOf("physics", "exam"))
         repo.setDocumentTags(b, listOf("physics"))
@@ -248,13 +248,15 @@ class DocumentRepositoryImplTest {
         assertEquals(2, tags.size)
         assertEquals(2, tags.first { it.name == "physics" }.usageCount)
 
-        // Search finds documents by title and tags by name.
+        // Document search matches titles; tag search matches names.
         val results = repo.searchAcross("physics")
-        assertEquals(2, results.documents.size)
+        assertEquals(1, results.documents.size)
+        assertEquals("Physics 101", results.documents.first().title)
         assertEquals(1, results.tags.size)
 
         repo.deleteTag("exam")
         assertEquals(listOf("physics"), repo.observeDocumentTags(a).first())
+        assertEquals(1, repo.observeTags().first().size)
     }
 
     @Test
