@@ -101,15 +101,6 @@
     <string name="action_copy">Copy</string>
     <string name="action_highlight">Highlight</string>
     <string name="action_underline">Underline</string>
-    <string name="action_select_text">Select text</string>
-    <string name="action_select_all">Select all</string>
-    <string name="copied">Copied to clipboard</string>
-    <string name="selected_words">%1$d words</string>
-
-    <!-- Text selection menu -->
-    <string name="action_copy">Copy</string>
-    <string name="action_highlight">Highlight</string>
-    <string name="action_underline">Underline</string>
     <string name="action_strikethrough">Strikethrough</string>
     <string name="action_select_text">Select text</string>
     <string name="action_select_all">Select all</string>

@@ -101,15 +101,6 @@
     <string name="action_copy">نسخ</string>
     <string name="action_highlight">تظليل</string>
     <string name="action_underline">تسطير</string>
-    <string name="action_select_text">تحديد نص</string>
-    <string name="action_select_all">تحديد الكل</string>
-    <string name="copied">تم النسخ إلى الحافظة</string>
-    <string name="selected_words">%1$d كلمة</string>
-
-    <!-- Text selection menu -->
-    <string name="action_copy">نسخ</string>
-    <string name="action_highlight">تظليل</string>
-    <string name="action_underline">تسطير</string>
     <string name="action_strikethrough">شطب</string>
     <string name="action_select_text">تحديد النص</string>
     <string name="action_select_all">تحديد الكل</string>
