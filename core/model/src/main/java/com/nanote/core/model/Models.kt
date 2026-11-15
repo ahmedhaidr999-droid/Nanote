@@ -31,7 +31,14 @@ enum class EraserMode { PIXEL, STROKE, OBJECT }
 enum class ToolbarPosition { BOTTOM, LEFT, RIGHT }
 enum class ThemeMode { SYSTEM, LIGHT, DARK }
 enum class AppLanguage { SYSTEM, ENGLISH, ARABIC }
-enum class NoteKind { NOTE, PDF }
+enum class NoteKind {
+    NOTE, PDF;
+
+    companion object {
+        fun safeOf(name: String?): NoteKind =
+            entries.firstOrNull { it.name == name } ?: NOTE
+    }
+}
 
 @Serializable
 data class StrokePoint(val x: Float, val y: Float, val p: Float = 1f)
