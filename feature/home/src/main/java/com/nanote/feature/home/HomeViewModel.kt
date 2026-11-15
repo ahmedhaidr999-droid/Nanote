@@ -79,9 +79,7 @@ class HomeViewModel @Inject constructor(
         .debounce(QUERY_DEBOUNCE_MS)
         .flatMapLatest { q ->
             if (q.isBlank()) flowOf(null)
-            else kotlinx.coroutines.flow.flow {
-                emit(repo.searchAcross(q))
-            }
+            else kotlinx.coroutines.flow.flow<SearchResults?> { emit(repo.searchAcross(q)) }
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
