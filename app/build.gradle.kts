@@ -10,9 +10,29 @@ plugins {
     alias(libs.plugins.hilt)
 }
 
+/**
+ * Release signing credentials are NEVER committed (see documentation/RELEASE.md).
+ * Resolution order:
+ *  1. Environment variables (CI secrets):
+ *     NANOTE_STORE_FILE, NANOTE_STORE_PASSWORD, NANOTE_KEY_ALIAS, NANOTE_KEY_PASSWORD
+ *  2. An untracked local keystore/keystore.properties file (gitignored).
+ * When neither is present the release build falls back to the debug key so CI
+ * artifacts remain installable — such builds are clearly NOT Play-Store releases.
+ */
 val keystoreProperties = Properties().apply {
-    val f = rootProject.file("keystore/keystore.properties")
-    if (f.exists()) load(FileInputStream(f))
+    val envStore = System.getenv("NANOTE_STORE_FILE")
+    val envStorePassword = System.getenv("NANOTE_STORE_PASSWORD")
+    val envKeyAlias = System.getenv("NANOTE_KEY_ALIAS")
+    val envKeyPassword = System.getenv("NANOTE_KEY_PASSWORD")
+    if (!envStore.isNullOrBlank() && !envStorePassword.isNullOrBlank()) {
+        put("storeFile", envStore)
+        put("storePassword", envStorePassword)
+        put("keyAlias", envKeyAlias ?: "nanote")
+        put("keyPassword", envKeyPassword ?: envStorePassword)
+    } else {
+        val f = rootProject.file("keystore/keystore.properties")
+        if (f.exists()) load(FileInputStream(f))
+    }
 }
 
 android {
@@ -23,8 +43,10 @@ android {
         applicationId = "com.nanote.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.1.0"
+        // Part 4 final integration release (Part 1 = 1.1.0, Part 2 = 1.2.0,
+        // Part 3 = 1.3.0, Part 4 integration = 1.4.0).
+        versionCode = 5
+        versionName = "1.4.0"
         vectorDrawables { useSupportLibrary = true }
     }
 
@@ -46,6 +68,11 @@ android {
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             if (keystoreProperties.isNotEmpty()) {
                 signingConfig = signingConfigs.getByName("release")
+            } else {
+                // No credentials provided (e.g. CI without configured secrets):
+                // sign with the debug key so the artifact is still installable.
+                // This is NOT a Play-Store release build.
+                signingConfig = signingConfigs.getByName("debug")
             }
         }
         debug {

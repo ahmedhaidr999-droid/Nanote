@@ -41,11 +41,18 @@ object DocumentMigrations {
             )
         }
 
-        // ---- v2 -> v3 (future steps plug in here) --------------------------
-        // if (result.version < 3) {
-        //     AppLog.i(TAG, "migrating document format v2 -> v3")
-        //     result = ...
-        // }
+        // ---- v2 -> v3 (Part 2) ---------------------------------------------
+        if (result.version < 3) {
+            AppLog.i(TAG, "migrating document format v2 -> v3")
+            // v3 fields decode to sensible defaults from v2 files; normalize
+            // explicitly so the saved snapshot always carries them.
+            result = result.copy(
+                version = 3,
+                strokes = result.strokes.map { it.copy(pressureResponse = it.pressureResponse) },
+                pages = result.pages.map { it.copy(template = it.template) },
+                canvasMode = result.canvasMode
+            )
+        }
 
         // Safety net: never hand out a document older than the current format.
         if (result.version < CURRENT_FORMAT_VERSION) {

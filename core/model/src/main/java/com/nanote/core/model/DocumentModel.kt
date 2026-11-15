@@ -30,6 +30,10 @@ class DocumentModel(initial: DocumentContent = DocumentContent(version = CURRENT
     val underlines = initial.underlines.toMutableList()
     val strikeThroughs = initial.strikeThroughs.toMutableList()
 
+    /** §9 canvas engine mode — PAGED (fixed pages) or INFINITE. */
+    var canvasMode: CanvasMode = initial.canvasMode
+        private set
+
     private val undoStack = ArrayDeque<Command>()
     private val redoStack = ArrayDeque<Command>()
 
@@ -68,7 +72,8 @@ class DocumentModel(initial: DocumentContent = DocumentContent(version = CURRENT
         images = images.toList(),
         highlights = highlights.toList(),
         underlines = underlines.toList(),
-        strikeThroughs = strikeThroughs.toList()
+        strikeThroughs = strikeThroughs.toList(),
+        canvasMode = canvasMode
     )
 
     val canUndo: Boolean get() = undoStack.isNotEmpty()
@@ -324,7 +329,8 @@ class DocumentModel(initial: DocumentContent = DocumentContent(version = CURRENT
             override fun execute() {
                 val lastW = pages.lastOrNull()?.width ?: 595f
                 val lastH = pages.lastOrNull()?.height ?: 842f
-                added = PageDef(index = pages.size, width = lastW, height = lastH, pdfPage = -1)
+                val template = pages.lastOrNull()?.template ?: PageTemplateKind.BLANK
+                added = PageDef(index = pages.size, width = lastW, height = lastH, pdfPage = -1, template = template)
                 pages.add(added)
                 _structureRevision.value = _structureRevision.value + 1
             }
@@ -335,5 +341,401 @@ class DocumentModel(initial: DocumentContent = DocumentContent(version = CURRENT
                 _structureRevision.value = _structureRevision.value + 1
             }
         }
+    }
+
+    // =====================================================================
+    // Part 2 — page management commands (§10)
+    // =====================================================================
+
+    /** Adds a page with explicit settings at [atIndex] (default: end). */
+    fun addPageWithCmd(def: PageDef, atIndex: Int = pages.size): Command {
+        var inserted: PageDef? = null
+        return object : Command {
+            override fun execute() {
+                val idx = atIndex.coerceIn(0, pages.size)
+                inserted = def.copy(index = idx)
+                pages.add(idx, inserted!!)
+                reindexPages()
+                shiftElementPagesAtLeast(idx, +1)
+                _structureRevision.value = _structureRevision.value + 1
+            }
+            override fun revert() {
+                val idx = pages.indexOfFirst { it === inserted }
+                if (idx >= 0) {
+                    shiftElementPagesAtLeast(idx + 1, -1)
+                    // remove the elements that lived on the inserted page itself
+                    val doomed = idx
+                    strokes.removeAll { it.page == doomed }
+                    shapes.removeAll { it.page == doomed }
+                    texts.removeAll { it.page == doomed }
+                    images.removeAll { it.page == doomed }
+                    pages.removeAt(idx)
+                    reindexPages()
+                    _structureRevision.value = _structureRevision.value + 1
+                }
+            }
+        }
+    }
+
+    /** Deletes page [index] together with its elements; later pages shift down. */
+    fun deletePageCmd(index: Int): Command {
+        var removedPage: PageDef? = null
+        var removedStrokes: List<Stroke> = emptyList()
+        var removedShapes: List<ShapeElement> = emptyList()
+        var removedTexts: List<TextElement> = emptyList()
+        var removedImages: List<ImageElement> = emptyList()
+        return object : Command {
+            override fun execute() {
+                if (index !in pages.indices) return
+                removedPage = pages.removeAt(index)
+                removedStrokes = strokes.filter { it.page == index }
+                removedShapes = shapes.filter { it.page == index }
+                removedTexts = texts.filter { it.page == index }
+                removedImages = images.filter { it.page == index }
+                strokes.removeAll(removedStrokes.toSet())
+                shapes.removeAll(removedShapes.toSet())
+                texts.removeAll(removedTexts.toSet())
+                images.removeAll(removedImages.toSet())
+                shiftElementPagesAtLeast(index + 1, -1)
+                reindexPages()
+                _structureRevision.value = _structureRevision.value + 1
+            }
+            override fun revert() {
+                val at = index.coerceIn(0, pages.size)
+                pages.add(at, removedPage ?: return)
+                shiftElementPagesAtLeast(at, +1)
+                strokes.addAll(removedStrokes.map { it.copy(page = at) })
+                shapes.addAll(removedShapes.map { it.copy(page = at) })
+                texts.addAll(removedTexts.map { it.copy(page = at) })
+                images.addAll(removedImages.map { it.copy(page = at) })
+                reindexPages()
+                _structureRevision.value = _structureRevision.value + 1
+            }
+        }
+    }
+
+    /** Duplicates page [index] (with elements, fresh ids) right after it. */
+    fun duplicatePageCmd(index: Int): Command {
+        var newStrokes: List<Stroke> = emptyList()
+        var newShapes: List<ShapeElement> = emptyList()
+        var newTexts: List<TextElement> = emptyList()
+        var newImages: List<ImageElement> = emptyList()
+        var insertedAt = -1
+        return object : Command {
+            override fun execute() {
+                if (index !in pages.indices) return
+                insertedAt = index + 1
+                val src = pages[index]
+                pages.add(insertedAt, src.copy(index = insertedAt, title = ""))
+                newStrokes = strokes.filter { it.page == index }.map { it.copy(id = newId(), page = insertedAt) }
+                newShapes = shapes.filter { it.page == index }.map { it.copy(id = newId(), page = insertedAt) }
+                newTexts = texts.filter { it.page == index }.map { it.copy(id = newId(), page = insertedAt) }
+                newImages = images.filter { it.page == index }.map { it.copy(id = newId(), page = insertedAt) }
+                strokes.addAll(newStrokes)
+                shapes.addAll(newShapes)
+                texts.addAll(newTexts)
+                images.addAll(newImages)
+                shiftElementPagesAtLeast(insertedAt + 1, +1)
+                reindexPages()
+                _structureRevision.value = _structureRevision.value + 1
+            }
+            override fun revert() {
+                if (insertedAt !in pages.indices) return
+                strokes.removeAll(newStrokes.toSet())
+                shapes.removeAll(newShapes.toSet())
+                texts.removeAll(newTexts.toSet())
+                images.removeAll(newImages.toSet())
+                shiftElementPagesAtLeast(insertedAt + 1, -1)
+                pages.removeAt(insertedAt)
+                reindexPages()
+                _structureRevision.value = _structureRevision.value + 1
+            }
+        }
+    }
+
+    /** Renames page [index]. */
+    fun renamePageCmd(index: Int, title: String): Command {
+        val old = pages.getOrNull(index)
+        if (old == null) return noopCommand()
+        return object : Command {
+            override fun execute() { if (index in pages.indices) pages[index] = pages[index].copy(title = title) }
+            override fun revert() { if (index in pages.indices) pages[index] = old }
+        }
+    }
+
+    /** Moves page [from] to [to]; all elements follow their page. */
+    fun reorderPageCmd(from: Int, to: Int): Command {
+        if (from == to || from !in pages.indices) return noopCommand()
+        val target = to.coerceIn(0, pages.size - 1)
+        return object : Command {
+            override fun execute() {
+                val page = pages.removeAt(from)
+                pages.add(target, page)
+                val mapping = buildReorderMapping(from, target)
+                remapElementPages(mapping)
+                reindexPages()
+                _structureRevision.value = _structureRevision.value + 1
+            }
+            override fun revert() {
+                val page = pages.removeAt(target)
+                pages.add(from, page)
+                val mapping = buildReorderMapping(target, from)
+                remapElementPages(mapping)
+                reindexPages()
+                _structureRevision.value = _structureRevision.value + 1
+            }
+        }
+    }
+
+    /**
+     * Replaces a page definition (template / size / orientation — §10).
+     * Changing the background never touches the handwriting.
+     */
+    fun setPageDefCmd(index: Int, def: PageDef): Command {
+        val old = pages.getOrNull(index) ?: return noopCommand()
+        return object : Command {
+            override fun execute() {
+                if (index in pages.indices) pages[index] = def.copy(index = index)
+                _structureRevision.value = _structureRevision.value + 1
+            }
+            override fun revert() {
+                if (index in pages.indices) pages[index] = old
+                _structureRevision.value = _structureRevision.value + 1
+            }
+        }
+    }
+
+    // =====================================================================
+    // Part 2 — transform commands (§8 / §11)
+    // =====================================================================
+
+    /** Replaces strokes with transformed copies (move/scale/rotate batches). */
+    fun transformStrokesCmd(pairs: List<Pair<Stroke, Stroke>>): Command = object : Command {
+        override fun execute() {
+            for ((old, new) in pairs) {
+                val i = strokes.indexOfFirst { it.id == old.id }
+                if (i >= 0) strokes[i] = new
+            }
+        }
+        override fun revert() {
+            for ((old, new) in pairs) {
+                val i = strokes.indexOfFirst { it.id == new.id }
+                if (i >= 0) strokes[i] = old
+            }
+        }
+    }
+
+    fun transformTextsCmd(pairs: List<Pair<TextElement, TextElement>>): Command = object : Command {
+        override fun execute() {
+            for ((old, new) in pairs) {
+                val i = texts.indexOfFirst { it.id == old.id }
+                if (i >= 0) texts[i] = new
+            }
+        }
+        override fun revert() {
+            for ((old, new) in pairs) {
+                val i = texts.indexOfFirst { it.id == new.id }
+                if (i >= 0) texts[i] = old
+            }
+        }
+    }
+
+    fun transformShapesCmd(pairs: List<Pair<ShapeElement, ShapeElement>>): Command = object : Command {
+        override fun execute() {
+            for ((old, new) in pairs) {
+                val i = shapes.indexOfFirst { it.id == old.id }
+                if (i >= 0) shapes[i] = new
+            }
+        }
+        override fun revert() {
+            for ((old, new) in pairs) {
+                val i = shapes.indexOfFirst { it.id == new.id }
+                if (i >= 0) shapes[i] = old
+            }
+        }
+    }
+
+    fun transformImagesCmd(pairs: List<Pair<ImageElement, ImageElement>>): Command = object : Command {
+        override fun execute() {
+            for ((old, new) in pairs) {
+                val i = images.indexOfFirst { it.id == old.id }
+                if (i >= 0) images[i] = new
+            }
+        }
+        override fun revert() {
+            for ((old, new) in pairs) {
+                val i = images.indexOfFirst { it.id == new.id }
+                if (i >= 0) images[i] = old
+            }
+        }
+    }
+
+    // =====================================================================
+    // Part 2 — grouping (§8) & multi-type paste composites
+    // =====================================================================
+
+    /** Assigns one shared groupId to every listed element. */
+    fun groupCmd(
+        strokeIds: Set<String>, textIds: Set<String>, imageIds: Set<String>, shapeIds: Set<String>
+    ): Command {
+        val gid = newId()
+        var oldStrokes: List<Stroke> = emptyList()
+        var oldTexts: List<TextElement> = emptyList()
+        var oldImages: List<ImageElement> = emptyList()
+        var oldShapes: List<ShapeElement> = emptyList()
+        return object : Command {
+            override fun execute() {
+                oldStrokes = strokes.filter { it.id in strokeIds }
+                oldTexts = texts.filter { it.id in textIds }
+                oldImages = images.filter { it.id in imageIds }
+                oldShapes = shapes.filter { it.id in shapeIds }
+                strokes.replaceAll { if (it.id in strokeIds) it.copy(groupId = gid) else it }
+                texts.replaceAll { if (it.id in textIds) it.copy(groupId = gid) else it }
+                images.replaceAll { if (it.id in imageIds) it.copy(groupId = gid) else it }
+                shapes.replaceAll { if (it.id in shapeIds) it.copy(groupId = gid) else it }
+            }
+            override fun revert() {
+                strokes.replaceAll { cur -> oldStrokes.firstOrNull { it.id == cur.id } ?: cur }
+                texts.replaceAll { cur -> oldTexts.firstOrNull { it.id == cur.id } ?: cur }
+                images.replaceAll { cur -> oldImages.firstOrNull { it.id == cur.id } ?: cur }
+                shapes.replaceAll { cur -> oldShapes.firstOrNull { it.id == cur.id } ?: cur }
+            }
+        }
+    }
+
+    /** Strips the given [groupId] from every element carrying it. */
+    fun ungroupCmd(groupId: String): Command {
+        var oldStrokes: List<Stroke> = emptyList()
+        var oldTexts: List<TextElement> = emptyList()
+        var oldImages: List<ImageElement> = emptyList()
+        var oldShapes: List<ShapeElement> = emptyList()
+        return object : Command {
+            override fun execute() {
+                oldStrokes = strokes.filter { it.groupId == groupId }
+                oldTexts = texts.filter { it.groupId == groupId }
+                oldImages = images.filter { it.groupId == groupId }
+                oldShapes = shapes.filter { it.groupId == groupId }
+                strokes.replaceAll { if (it.groupId == groupId) it.copy(groupId = null) else it }
+                texts.replaceAll { if (it.groupId == groupId) it.copy(groupId = null) else it }
+                images.replaceAll { if (it.groupId == groupId) it.copy(groupId = null) else it }
+                shapes.replaceAll { if (it.groupId == groupId) it.copy(groupId = null) else it }
+            }
+            override fun revert() {
+                strokes.replaceAll { cur -> oldStrokes.firstOrNull { it.id == cur.id } ?: cur }
+                texts.replaceAll { cur -> oldTexts.firstOrNull { it.id == cur.id } ?: cur }
+                images.replaceAll { cur -> oldImages.firstOrNull { it.id == cur.id } ?: cur }
+                shapes.replaceAll { cur -> oldShapes.firstOrNull { it.id == cur.id } ?: cur }
+            }
+        }
+    }
+
+    // =====================================================================
+    // Part 2 — multi-type composites (§8 paste / cut)
+    // =====================================================================
+
+    /** Adds a mixed batch of elements in ONE undo step (paste). */
+    fun addElementsCmd(
+        newStrokes: List<Stroke>,
+        newTexts: List<TextElement>,
+        newImages: List<ImageElement>,
+        newShapes: List<ShapeElement>
+    ): Command = object : Command {
+        override fun execute() {
+            strokes.addAll(newStrokes)
+            texts.addAll(newTexts)
+            images.addAll(newImages)
+            shapes.addAll(newShapes)
+        }
+        override fun revert() {
+            strokes.removeAll(newStrokes.toSet())
+            texts.removeAll(newTexts.toSet())
+            images.removeAll(newImages.toSet())
+            shapes.removeAll(newShapes.toSet())
+        }
+    }
+
+    /** Removes a mixed batch of elements in ONE undo step (cut / delete selection). */
+    fun removeElementsCmd(
+        strokes: List<Stroke>,
+        texts: List<TextElement>,
+        images: List<ImageElement>,
+        shapes: List<ShapeElement>
+    ): Command = object : Command {
+        override fun execute() {
+            this@DocumentModel.strokes.removeAll(strokes.toSet())
+            this@DocumentModel.texts.removeAll(texts.toSet())
+            this@DocumentModel.images.removeAll(images.toSet())
+            this@DocumentModel.shapes.removeAll(shapes.toSet())
+        }
+        override fun revert() {
+            this@DocumentModel.strokes.addAll(strokes)
+            this@DocumentModel.texts.addAll(texts)
+            this@DocumentModel.images.addAll(images)
+            this@DocumentModel.shapes.addAll(shapes)
+        }
+    }
+
+    /** §9 — switches the canvas engine mode (PAGED ↔ INFINITE). */
+    fun setCanvasModeCmd(mode: CanvasMode): Command {
+        val old = canvasMode
+        return object : Command {
+            override fun execute() {
+                canvasMode = mode
+                _structureRevision.value = _structureRevision.value + 1
+            }
+            override fun revert() {
+                canvasMode = old
+                _structureRevision.value = _structureRevision.value + 1
+            }
+        }
+    }
+
+    // =====================================================================
+    // Part 2 — page/element helpers
+    // =====================================================================
+
+    private fun noopCommand(): Command = object : Command {
+        override fun execute() {}
+        override fun revert() {}
+    }
+
+    private fun reindexPages() {
+        pages.forEachIndexed { i, p -> if (p.index != i) pages[i] = p.copy(index = i) }
+    }
+
+    /** Shifts the page index of every element whose page >= [from] by [delta]. */
+    private fun shiftElementPagesAtLeast(from: Int, delta: Int) {
+        fun shift(page: Int): Int = if (page >= from) page + delta else page
+        strokes.replaceAll { it.copy(page = shift(it.page)) }
+        shapes.replaceAll { it.copy(page = shift(it.page)) }
+        texts.replaceAll { it.copy(page = shift(it.page)) }
+        images.replaceAll { it.copy(page = shift(it.page)) }
+    }
+
+    /**
+     * Page permutation when a page moves [from] → [to]: returns oldIndex → newIndex.
+     * Example: 0,1,2 with move(0→2): pages end as 1,2,0 → mapping {0→2, 1→0, 2→1}.
+     */
+    private fun buildReorderMapping(from: Int, to: Int): Map<Int, Int> {
+        val mapping = HashMap<Int, Int>()
+        val n = pages.size
+        for (old in 0 until n) {
+            val new = when {
+                old == from -> to
+                from < to && old in (from + 1)..to -> old - 1
+                from > to && old in to until from -> old + 1
+                else -> old
+            }
+            mapping[old] = new
+        }
+        return mapping
+    }
+
+    private fun remapElementPages(mapping: Map<Int, Int>) {
+        fun remap(page: Int): Int = mapping[page] ?: page
+        strokes.replaceAll { it.copy(page = remap(it.page)) }
+        shapes.replaceAll { it.copy(page = remap(it.page)) }
+        texts.replaceAll { it.copy(page = remap(it.page)) }
+        images.replaceAll { it.copy(page = remap(it.page)) }
     }
 }

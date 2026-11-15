@@ -70,4 +70,13 @@
     <string name="restore_done_title">Restore finished</string>
     <string name="restore_done_summary">%1$d notebooks and %2$d PDFs restored.</string>
     <string name="restore_renamed">%1$d documents were renamed to avoid duplicates.</string>
+    <!-- Part 2: input settings -->
+    <string name="finger_action">Finger behavior</string>
+    <string name="finger_action_scroll">Scroll and zoom (stylus draws)</string>
+    <string name="finger_action_draw">Draw with finger too</string>
+    <string name="finger_action_ignore">Ignore finger input</string>
+    <string name="pressure_curve">Pressure curve</string>
+    <string name="curve_linear">Linear</string>
+    <string name="curve_soft">Soft</string>
+    <string name="curve_firm">Firm</string>
 </resources>

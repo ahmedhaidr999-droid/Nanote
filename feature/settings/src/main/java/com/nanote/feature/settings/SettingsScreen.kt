@@ -30,6 +30,8 @@ import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.compose.material.icons.outlined.Draw
 import androidx.compose.material.icons.outlined.IosShare
+import androidx.compose.material.icons.outlined.ExpandLess
+import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.Restore
@@ -76,6 +78,8 @@ import com.nanote.core.design.components.SettingsSectionCard
 import com.nanote.core.design.components.SortMenuButton
 import com.nanote.core.design.components.ViewModeToggle
 import com.nanote.core.design.components.sortOptionLabel
+import com.nanote.core.model.FingerAction
+import com.nanote.core.model.PressureCurve
 import com.nanote.core.design.theme.Dimens
 import com.nanote.core.design.theme.accentSwatch
 import com.nanote.core.model.AccentColor
@@ -315,6 +319,8 @@ fun SettingsScreen(
 
             // ----- Pen & tools -----
             item(key = "pen") {
+                val fingerAction by vm.editorSettings.fingerAction.collectAsStateWithLifecycle()
+                val pressureCurve by vm.editorSettings.pressureCurve.collectAsStateWithLifecycle()
                 SettingsSectionCard(
                     title = stringResource(R.string.settings_pen),
                     icon = Icons.Outlined.Draw
@@ -329,6 +335,124 @@ fun SettingsScreen(
                         checked = palm,
                         onCheckedChange = vm::setPalm
                     )
+                    // §5 — finger behavior on the canvas
+                    var fingerExpanded by remember { mutableStateOf(false) }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { fingerExpanded = !fingerExpanded }
+                            .padding(vertical = Dimens.paddingSm),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(stringResource(R.string.finger_action), style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                stringResource(
+                                    when (fingerAction) {
+                                        FingerAction.SCROLL -> R.string.finger_action_scroll
+                                        FingerAction.DRAW -> R.string.finger_action_draw
+                                        FingerAction.IGNORE -> R.string.finger_action_ignore
+                                    }
+                                ),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Icon(
+                            if (fingerExpanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+                            contentDescription = null
+                        )
+                    }
+                    if (fingerExpanded) {
+                        FingerAction.entries.forEach { action ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        vm.setFingerAction(action)
+                                        fingerExpanded = false
+                                    },
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = fingerAction == action,
+                                    onClick = {
+                                        vm.setFingerAction(action)
+                                        fingerExpanded = false
+                                    }
+                                )
+                                Text(
+                                    stringResource(
+                                        when (action) {
+                                            FingerAction.SCROLL -> R.string.finger_action_scroll
+                                            FingerAction.DRAW -> R.string.finger_action_draw
+                                            FingerAction.IGNORE -> R.string.finger_action_ignore
+                                        }
+                                    ),
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                            }
+                        }
+                    }
+                    // §3 — pressure curve
+                    var curveExpanded by remember { mutableStateOf(false) }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { curveExpanded = !curveExpanded }
+                            .padding(vertical = Dimens.paddingSm),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(stringResource(R.string.pressure_curve), style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                stringResource(
+                                    when (pressureCurve) {
+                                        PressureCurve.LINEAR -> R.string.curve_linear
+                                        PressureCurve.SOFT -> R.string.curve_soft
+                                        PressureCurve.FIRM -> R.string.curve_firm
+                                    }
+                                ),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Icon(
+                            if (curveExpanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+                            contentDescription = null
+                        )
+                    }
+                    if (curveExpanded) {
+                        PressureCurve.entries.forEach { curve ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        vm.setPressureCurve(curve)
+                                        curveExpanded = false
+                                    },
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = pressureCurve == curve,
+                                    onClick = {
+                                        vm.setPressureCurve(curve)
+                                        curveExpanded = false
+                                    }
+                                )
+                                Text(
+                                    stringResource(
+                                        when (curve) {
+                                            PressureCurve.LINEAR -> R.string.curve_linear
+                                            PressureCurve.SOFT -> R.string.curve_soft
+                                            PressureCurve.FIRM -> R.string.curve_firm
+                                        }
+                                    ),
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                            }
+                        }
+                    }
                     LabelledSwitchRow(
                         title = stringResource(R.string.prefetch_pages),
                         checked = prefetch,

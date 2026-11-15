@@ -2,7 +2,134 @@
 
 All notable changes to Nanote are documented here.
 
-## [1.2.0] — Part 3: PDF engine, local storage, search & export
+## [1.4.0] — Part 4: final integration, QA & release preparation
+
+### Full application integration (the headline fix)
+- **Part 2 (handwriting engine, canvas & notebook editor) had never been
+  merged** — Part 3 was built on the Part 1 merge base. Part 4 integrates
+  all three parts on main: 20 overlapping files, 14 content conflicts
+  resolved semantically (models, eraser, repository, painter, menus,
+  settings, strings).
+- `DocumentContent` carries BOTH Part 2's `canvasMode` and Part 3's
+  `strikeThroughs`; snapshot/undo/redo/export cover the union.
+- The eraser commits shapes (Part 2) and strikethrough marks (Part 3) in
+  one undoable batch.
+- Part 2's four new shape kinds (double arrow, rounded rect, ellipse,
+  polygon) ported into the Part 3 export architecture
+  (`core/pdf/PdfContentPainter`).
+- Editor UI: page strip (paged mode), pages panel, export sheet, PDF info
+  sheet, canvas-mode switch, save-status chip and bookmark all coexist.
+- Settings: input behavior (finger action, pressure curve, color memory)
+  + export/autosave/backup sections merged.
+- Room schema stays v3 (both branches shared an identical
+  MIGRATION_1_2); exported schemas 2.json/3.json committed.
+
+### Security & privacy hardening
+- **Removed the committed release keystore and its passwords** from the
+  tree and gitignored all keystore patterns (they remain in git history —
+  the old key must never sign a public release; see RELEASE.md).
+- Signing now resolves from `NANOTE_*` environment variables, then an
+  untracked `keystore/keystore.properties`, else falls back to the debug
+  key (clearly labeled, never presented as a store release).
+- CI can restore the signing key from GitHub secrets
+  (`NANOTE_KEYSTORE_BASE64` + friends) and now also builds the **AAB**.
+
+### Release preparation
+- Version 1.4.0 (versionCode 5); CI-sized Gradle memory with documented
+  sandbox overrides; release job labeled honestly.
+
+### Tests
+- 6 new integration tests covering the merge seams:
+  `MergedContentFormatTest` (Part 2 + Part 3 content in one `.nanote`
+  file, legacy/part-only loads) and `MergedContentPaintTest` (merged
+  content paints into a reopenable PDF; polygon vertex paths).
+- **98 unit tests, 0 failures** (14 classes) on the merged tree; debug
+  APK, androidTest compile, release APK and AAB all build.
+
+### Documentation
+- New: `RELEASE.md`, `DATABASE_SCHEMA.md`, `HANDWRITING_ENGINE.md`,
+  `TESTING.md`. Updated: README, FEATURES (status labels), ARCHITECTURE,
+  ROADMAP. Full set: 12 files.
+
+### Honest limitations (carried and verified)
+- No physical-device QA performed in this environment — see TESTING.md
+  for the device checklist; no handwriting-performance claims are made.
+- pdfium cannot load under JVM Robolectric; export unit tests verify via
+  the independent pdfbox reload path (device pipeline re-verifies with
+  pdfium).
+- Arabic text export still uses WinAnsi-safe approximations (PDFBox
+  Type1 limitation) — unchanged, documented.
+
+## [1.2.0] — Part 2 Handwriting Engine, Canvas & Notebook Editor
+
+### Handwriting engine
+- Five distinct pen engines: ballpoint, **fountain** (pressure × velocity
+  width), **brush** (strong pressure taper), **pencil** (seeded graphite
+  grain), highlighter — each with color, thickness, opacity, pressure
+  response and smoothing configuration.
+- Pressure response curves (linear / soft / firm) baked into strokes at
+  capture time so existing ink never re-renders differently.
+- Full stylus capture: pressure, tilt (where reported), per-point timestamps,
+  historical high-frequency event replay, exponential + commit smoothing.
+
+### Palm rejection & input policy
+- Configurable finger behavior (scroll / draw / ignore), hard palm guard
+  while a stylus is active, hardware eraser tip and barrel button mapped to
+  the eraser.
+
+### Eraser
+- Stroke, object and **partial** eraser. Partial erase splits strokes at
+  interpolated capsule-boundary intersections, preserving the remaining
+  geometry (coordinates, pressure, tilt, timestamps) bit-exactly — no
+  rasterization.
+
+### Editing & selection
+- Undo/redo across all new operations (200 steps).
+- Lasso + rectangle geometric selection (segment-polygon and Liang-Barsky
+  intersection, not bbox-only), single-object tap, group semantics.
+- Move, resize (4 corner handles), rotate (dedicated handle) with live ghost
+  preview — strokes scale (incl. width) and rotate as vectors.
+- Copy / cut / paste via a process-wide vector clipboard; group / ungroup;
+  duplicate; delete.
+
+### Canvas & pages
+- **Infinite canvas mode** (per document, undoable, persisted): unbounded
+  surface within safe numeric limits, dot-grid background, content-bounds
+  pan clamping.
+- Page management: add / delete / duplicate / rename / reorder pages with
+  element migration; page rail with live thumbnails.
+- **12 page templates** (blank, ruled, college ruled, wide ruled, grid, small
+  grid, dotted, Cornell, music staff, planner, to-do, custom) — changing a
+  template never touches handwriting.
+- Page sizes A4/A5/Letter/Legal and portrait/landscape per page.
+
+### Text, images, shapes
+- Rich text: 6 font families, size, bold/italic/underline/strikethrough,
+  text + background color, bidi-aware alignment, bulleted/numbered lists,
+  rotation; Arabic & mixed-direction text verified by tests.
+- Images: picker + camera, sampled decoding, LRU cache, transform set,
+  crop model.
+- Shapes: 9 kinds (line, arrow, double arrow, rect, rounded rect, circle,
+  ellipse, triangle, polygon) with fill, opacity, angle snapping, and
+  **deterministic shape recognition** (no AI).
+
+### Persistence
+- `.nanote` format **v3** with full backward compatibility (v1/v2 load with
+  defaults and migrate). Autosave integration verified across page and
+  canvas-mode switches.
+
+### Performance
+- Uniform-grid spatial index broad-phase; viewport culling in both canvas
+  modes; zero allocations on the draw hot path.
+
+### Tests
+- 27 new unit tests (partial erase geometry, transforms, hit tests,
+  smoothing, pressure curves, shape recognition incl. scribble rejection,
+  page commands with undo/redo, grouping, composites, format v3 round-trip
+  and v2 compatibility, Arabic/mixed bidi layout, per-tool render smoke,
+  template painting, spatial index). Total suite: 68 unit tests green.
+
+## [1.3.0] — Part 3: PDF engine, local storage, search & export
 
 ### PDF engine
 - Five separated responsibilities (render / extract / annotate / page ops /

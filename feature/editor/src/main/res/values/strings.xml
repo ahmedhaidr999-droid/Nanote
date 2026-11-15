@@ -175,4 +175,89 @@
     <string name="close">Close</string>
     <string name="insert_text_hint">Type here…</string>
     <string name="text_layer_building">Preparing text…</string>
+
+    <!-- Part 2: pen tools & customization -->
+    <string name="tool_fountain">Fountain pen</string>
+    <string name="pressure_response">Pressure response</string>
+    <string name="smoothing">Smoothing</string>
+    <string name="recent_colors">Recent colors</string>
+    <string name="favorite_colors">Favorites</string>
+    <string name="favorite_color">Favorite this color</string>
+    <string name="unfavorite_color">Unfavorite this color</string>
+    <string name="presets_section">Presets</string>
+    <string name="no_presets_yet">No presets saved yet</string>
+    <string name="save">Save</string>
+    <string name="no_settings">No settings for this tool</string>
+
+    <!-- Part 2: eraser -->
+    <string name="eraser_mode">Eraser mode</string>
+    <string name="eraser_stroke">Stroke eraser</string>
+    <string name="eraser_object">Object eraser</string>
+    <string name="eraser_area">Partial eraser</string>
+
+    <!-- Part 2: shapes -->
+    <string name="shape_kind">Shape</string>
+    <string name="shape_double_arrow">Double arrow</string>
+    <string name="shape_rounded_rect">Rounded rectangle</string>
+    <string name="shape_ellipse">Ellipse</string>
+    <string name="shape_polygon">Polygon</string>
+    <string name="filled_shape">Filled</string>
+    <string name="snap_to_geometry">Snap to geometry</string>
+    <string name="shape_recognition">Shape recognition</string>
+
+    <!-- Part 2: selection operations -->
+    <string name="copy">Copy</string>
+    <string name="cut">Cut</string>
+    <string name="paste">Paste</string>
+    <string name="group_selection">Group</string>
+    <string name="ungroup_selection">Ungroup</string>
+
+    <!-- Part 2: page management -->
+    <string name="page_menu_title">Page %1$d</string>
+    <string name="page_rename">Rename page</string>
+    <string name="page_duplicate">Duplicate page</string>
+    <string name="page_delete">Delete page</string>
+    <string name="page_move_up">Move up</string>
+    <string name="page_move_down">Move down</string>
+    <string name="page_template">Page template</string>
+    <string name="page_size">Page size</string>
+    <string name="template_blank">Blank</string>
+    <string name="template_ruled">Ruled</string>
+    <string name="template_college_ruled">College ruled</string>
+    <string name="template_wide_ruled">Wide ruled</string>
+    <string name="template_grid">Grid</string>
+    <string name="template_small_grid">Small grid</string>
+    <string name="template_dotted">Dotted</string>
+    <string name="template_cornell">Cornell</string>
+    <string name="template_music">Music staff</string>
+    <string name="template_planner">Planner</string>
+    <string name="template_todo">To-do list</string>
+    <string name="template_custom">Custom</string>
+    <string name="template_keep_note">Changing the template never affects your handwriting</string>
+    <string name="orientation_landscape">Landscape</string>
+    <string name="orientation_portrait">Portrait</string>
+
+    <!-- Part 2: canvas modes -->
+    <string name="switch_to_infinite">Switch to infinite canvas</string>
+    <string name="switch_to_paged">Switch to fixed pages</string>
+
+    <!-- Part 2: rich text -->
+    <string name="font_default">Default</string>
+    <string name="font_serif">Serif</string>
+    <string name="font_mono">Mono</string>
+    <string name="font_casual">Casual</string>
+    <string name="font_cursive">Cursive</string>
+    <string name="font_sans">Sans</string>
+    <string name="bold">Bold</string>
+    <string name="italic">Italic</string>
+    <string name="underline">Underline</string>
+    <string name="strikethrough">Strikethrough</string>
+    <string name="align_start">Align start</string>
+    <string name="align_center">Align center</string>
+    <string name="align_end">Align end</string>
+    <string name="list_bullet">Bulleted list</string>
+    <string name="list_numbered">Numbered list</string>
+    <string name="font_size">Size</string>
+    <string name="text_color">Text color</string>
+    <string name="background_color">Background</string>
 </resources>

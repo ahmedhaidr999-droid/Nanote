@@ -77,8 +77,12 @@ class PageLayout(pages: List<PageDef>) {
 
 /**
  * Zoom + pan + layout state of one canvas pane.
- * Vertical continuous scrolling — pages NEVER shift left/right when flipping
- * (the reported bug); horizontal panning only happens from user zoom/pan.
+ *
+ * PAGED mode: vertical continuous scrolling — pages NEVER shift left/right when
+ * flipping; horizontal panning only happens from user zoom/pan.
+ *
+ * INFINITE mode (§9): one unbounded logical surface within safe numeric
+ * limits; pan clamping follows the content bounds instead of page bounds.
  */
 class CanvasState(
     pages: List<PageDef>
@@ -86,6 +90,16 @@ class CanvasState(
     val transform = ViewportTransform()
     var layout: PageLayout = PageLayout(pages)
         private set
+
+    /** §9 — true while the document uses the infinite canvas engine. */
+    var infiniteMode: Boolean = false
+        private set
+
+    /**
+     * Content bounds in world coords used for infinite-mode clamping
+     * ([minX, minY, maxX, maxY]) — updated by the pane as elements change.
+     */
+    var contentBounds: FloatArray? = null
 
     var viewportWidth: Int = 1080
     var viewportHeight: Int = 1920
@@ -95,6 +109,22 @@ class CanvasState(
 
     fun setPages(pages: List<PageDef>) {
         layout = PageLayout(pages)
+    }
+
+    /** Switches the canvas engine mode; rebuilds the layout accordingly. */
+    fun setInfinite(enabled: Boolean) {
+        infiniteMode = enabled
+        layout = if (enabled) {
+            // one virtual page of generous size; all input maps to page 0
+            PageLayout(listOf(PageDef(index = 0, width = VIRTUAL_SIZE, height = VIRTUAL_SIZE)))
+        } else {
+            layout // restored by the pane via setPages() right after
+        }
+    }
+
+    companion object {
+        /** Virtual page size for the infinite surface (world units). */
+        const val VIRTUAL_SIZE = 60_000f
     }
 
     // ---------- viewport math ----------
@@ -121,12 +151,16 @@ class CanvasState(
     }
 
     /** Page under the viewport center — used for the page indicator. */
-    fun currentPage(): Int = layout.nearestPage((worldTop() + worldBottom()) / 2f)
+    fun currentPage(): Int = if (infiniteMode) 0 else layout.nearestPage((worldTop() + worldBottom()) / 2f)
 
     // ---------- clamped navigation ----------
 
     fun clampPan() {
         val s = transform.scale
+        if (infiniteMode) {
+            clampPanInfinite()
+            return
+        }
         val contentW = layout.maxPageWidth
         val contentH = max(layout.contentHeight, 100f)
 
@@ -146,6 +180,35 @@ class CanvasState(
             transform.set(transform.scale, transform.panX, viewportHeight + overscroll * transform.scale - contentH * transform.scale)
         } else if (yBottom < -overscroll) {
             transform.set(transform.scale, transform.panX, -overscroll * transform.scale)
+        }
+    }
+
+    /** Infinite mode: clamp around the content bbox (or the viewport itself). */
+    private fun clampPanInfinite() {
+        val b = contentBounds
+        val margin = 800f
+        val l: Float; val t: Float; val r: Float; val bot: Float
+        if (b != null && b[2] > b[0] && b[3] > b[1]) {
+            l = b[0] - margin; t = b[1] - margin; r = b[2] + margin; bot = b[3] + margin
+        } else {
+            // empty canvas — free-roam around a comfortable home area
+            l = -VIRTUAL_SIZE / 3f; t = -VIRTUAL_SIZE / 3f
+            r = VIRTUAL_SIZE * 2f / 3f; bot = VIRTUAL_SIZE * 2f / 3f
+        }
+        val s = transform.scale
+        val screenLeftWorld = transform.screenToWorldX(0f)
+        val screenRightWorld = transform.screenToWorldX(viewportWidth.toFloat())
+        if (screenLeftWorld > r) {
+            transform.set(s, r * s - viewportWidth, transform.panY)
+        } else if (screenRightWorld < l) {
+            transform.set(s, l * s, transform.panY)
+        }
+        val yTop = transform.screenToWorldY(0f)
+        val yBottom = transform.screenToWorldY(viewportHeight.toFloat())
+        if (yTop > bot) {
+            transform.set(transform.scale, transform.panX, bot * transform.scale - viewportHeight)
+        } else if (yBottom < t) {
+            transform.set(transform.scale, transform.panX, t * transform.scale)
         }
     }
 
@@ -213,6 +276,7 @@ class CanvasState(
     fun scrollY(): Float = worldTop()
 
     fun scrollToPage(pageIndex: Int) {
+        if (infiniteMode) return
         if (layout.count == 0) return
         val i = pageIndex.coerceIn(0, layout.count - 1)
         val targetPanY = -layout.pageTop(i) * transform.scale

@@ -115,3 +115,15 @@ successful extraction).
   verification in Part 4 QA.
 * The archive is a snapshot, not a sync: restoring never deletes current
   documents that are absent from the archive.
+
+## 7. Part 4 integration notes
+
+* A `.nanote` v3 file can carry **both** Part 2 content (infinite canvas
+  mode, the four new shape kinds with polygon vertices) and Part 3 content
+  (strikethrough marks) at once — verified field-by-field by
+  `MergedContentFormatTest`, including legacy v2 files (defaults: PAGED
+  canvas, no marks) and part-only files written by either development
+  line.
+* The Room schema is unchanged by the integration (v3); the exported
+  schema JSONs (2.json, 3.json) are committed under
+  `core/database/schemas/` for release hygiene.
