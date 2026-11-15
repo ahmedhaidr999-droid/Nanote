@@ -420,6 +420,12 @@ class PaneController(
     fun nextPage() = goToPage(_currentPage.value + 1)
     fun prevPage() = goToPage(_currentPage.value - 1)
 
+    /** Current world→screen zoom scale (used to persist reading position). */
+    fun currentZoomScale(): Float = canvasState.transform.scale
+
+    /** Underlying source PDF page of a document page (−1 for plain notes). */
+    fun pdfPageOf(pageIndex: Int): Int = doc.pages.getOrNull(pageIndex)?.pdfPage ?: -1
+
     fun goToPage(page: Int) {
         canvasState.scrollToPage(page.coerceIn(0, (doc.pageCount() - 1).coerceAtLeast(0)))
         _currentPage.value = page.coerceIn(0, (doc.pageCount() - 1).coerceAtLeast(0))
@@ -466,6 +472,8 @@ class PaneController(
     fun highlightSelection(): Boolean = controller.highlightSelection()
 
     fun underlineSelection(): Boolean = controller.underlineSelection()
+
+    fun strikeThroughSelection(): Boolean = controller.strikeThroughSelection()
 
     fun selectAllText() = controller.selectAllText()
 

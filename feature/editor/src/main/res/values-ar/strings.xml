@@ -106,9 +106,82 @@
     <string name="copied">تم النسخ إلى الحافظة</string>
     <string name="selected_words">%1$d كلمة</string>
 
+    <!-- Text selection menu -->
+    <string name="action_copy">نسخ</string>
+    <string name="action_highlight">تظليل</string>
+    <string name="action_underline">تسطير</string>
+    <string name="action_strikethrough">شطب</string>
+    <string name="action_select_text">تحديد النص</string>
+    <string name="action_select_all">تحديد الكل</string>
+    <string name="copied">تم النسخ إلى الحافظة</string>
+    <string name="selected_words">%1$d كلمة</string>
+
+    <!-- Save status (autosave indicator) -->
+    <string name="save_state_saving">جارٍ الحفظ…</string>
+    <string name="save_state_saved">محفوظ</string>
+    <string name="save_state_error">فشل الحفظ</string>
+
+    <!-- Pages panel & page operations -->
+    <string name="pages_panel_title">الصفحات</string>
+    <string name="page_thumbnail_cd">مصغّرة الصفحة %1$d</string>
+    <string name="page_number_label">صفحة %1$d</string>
+    <string name="bookmark_toggle">إضافة هذه الصفحة إلى الإشارات المرجعية</string>
+    <string name="bookmark_added">تمت إضافة الإشارة المرجعية</string>
+    <string name="bookmark_removed">تمت إزالة الإشارة المرجعية</string>
+    <string name="insert_pages_from_pdf">إدراج صفحات من ملف PDF</string>
+    <string name="page_op_menu">عمليات الصفحة</string>
+    <string name="page_op_menu_title">صفحة %1$d</string>
+    <string name="page_op_rotate">تدوير ٩٠°</string>
+    <string name="page_op_duplicate">تكرار الصفحة</string>
+    <string name="page_op_move_up">نقل لأعلى</string>
+    <string name="page_op_move_down">نقل لأسفل</string>
+    <string name="page_op_delete">حذف الصفحة</string>
+    <string name="page_op_delete_confirm_title">حذف هذه الصفحة؟</string>
+    <string name="page_op_delete_confirm_text">ستُزال الصفحة %1$d من النسخة العاملة. يبقى الملف الأصلي المستورد دون تغيير.</string>
+    <string name="page_op_running">جارٍ التنفيذ…</string>
+    <string name="page_op_done">تم تحديث الصفحات</string>
+    <string name="page_op_failed">فشلت عملية الصفحة</string>
+    <string name="pages_extracted">تم الاستخراج إلى مستند جديد</string>
+
+    <!-- Export sheet -->
+    <string name="export_sheet_title">تصدير ومشاركة</string>
+    <string name="export_format_label">الصيغة</string>
+    <string name="export_format_pdf">PDF</string>
+    <string name="export_format_png">PNG</string>
+    <string name="export_format_jpeg">JPEG</string>
+    <string name="export_format_nanote">‎.nanote</string>
+    <string name="export_pdf_mode_label">التعليقات التوضيحية</string>
+    <string name="export_mode_flattened">مدمجة</string>
+    <string name="export_mode_markup">إبقاء النص قابلاً للتحديد</string>
+    <string name="export_mode_original">الأصل فقط</string>
+    <string name="export_mode_original_hint">تصدير المستند دون أي تعليقات توضيحية.</string>
+    <string name="export_mode_markup_hint">تُدمج الكتابة والصور؛ وتصبح التظليلات والتسطيرات والشطب تعليقات PDF حقيقية.</string>
+    <string name="export_pages_label">الصفحات</string>
+    <string name="export_pages_all">كل الصفحات</string>
+    <string name="export_pages_choose">اختيار الصفحات</string>
+    <string name="export_pages_selected">تم تحديد %1$d من %2$d صفحة</string>
+    <string name="export_save_to_file">حفظ في ملف</string>
+    <string name="export_share">مشاركة</string>
+    <string name="export_print">طباعة</string>
+    <string name="export_image_single_page_hint">صيغ الصور تصدّر صفحة واحدة (أول صفحة محددة).</string>
+
+    <!-- PDF info sheet -->
+    <string name="pdf_info_title">تفاصيل PDF</string>
+    <string name="pdf_info_unavailable">لا توجد معلومات PDF متاحة.</string>
+    <string name="pdf_info_file">الملف</string>
+    <string name="pdf_info_size">الحجم</string>
+    <string name="pdf_info_pages">الصفحات</string>
+    <string name="pdf_info_doc_title">العنوان</string>
+    <string name="pdf_info_author">المؤلف</string>
+    <string name="pdf_info_creator">المنشئ</string>
+    <string name="pdf_info_producer">المنتج</string>
+    <string name="pdf_info_imported">تاريخ الاستيراد</string>
+    <string name="pdf_info_opened">آخر فتح</string>
+    <string name="pdf_info_text_search_note">الصفحات الممسوحة ضوئيًا بدون نص مضمّن غير قابلة للبحث — لا يتم التعرف على الكتابة اليدوية أو OCR.</string>
+
     <!-- Misc -->
-    <string name="ok">حسناً</string>
+    <string name="ok">حسنًا</string>
     <string name="close">إغلاق</string>
     <string name="insert_text_hint">اكتب هنا…</string>
-    <string name="text_layer_building">جارٍ تجهيز النص…</string>
+    <string name="text_layer_building">جارٍ تحضير النص…</string>
 </resources>

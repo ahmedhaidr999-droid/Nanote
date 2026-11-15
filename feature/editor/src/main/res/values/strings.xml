@@ -106,6 +106,79 @@
     <string name="copied">Copied to clipboard</string>
     <string name="selected_words">%1$d words</string>
 
+    <!-- Text selection menu -->
+    <string name="action_copy">Copy</string>
+    <string name="action_highlight">Highlight</string>
+    <string name="action_underline">Underline</string>
+    <string name="action_strikethrough">Strikethrough</string>
+    <string name="action_select_text">Select text</string>
+    <string name="action_select_all">Select all</string>
+    <string name="copied">Copied to clipboard</string>
+    <string name="selected_words">%1$d words</string>
+
+    <!-- Save status (autosave indicator) -->
+    <string name="save_state_saving">Saving…</string>
+    <string name="save_state_saved">Saved</string>
+    <string name="save_state_error">Save failed</string>
+
+    <!-- Pages panel & page operations -->
+    <string name="pages_panel_title">Pages</string>
+    <string name="page_thumbnail_cd">Thumbnail of page %1$d</string>
+    <string name="page_number_label">Page %1$d</string>
+    <string name="bookmark_toggle">Bookmark this page</string>
+    <string name="bookmark_added">Bookmark added</string>
+    <string name="bookmark_removed">Bookmark removed</string>
+    <string name="insert_pages_from_pdf">Insert pages from PDF</string>
+    <string name="page_op_menu">Page operations</string>
+    <string name="page_op_menu_title">Page %1$d</string>
+    <string name="page_op_rotate">Rotate 90°</string>
+    <string name="page_op_duplicate">Duplicate page</string>
+    <string name="page_op_move_up">Move up</string>
+    <string name="page_op_move_down">Move down</string>
+    <string name="page_op_delete">Delete page</string>
+    <string name="page_op_delete_confirm_title">Delete this page?</string>
+    <string name="page_op_delete_confirm_text">Page %1$d will be removed from the working copy. The original imported file stays untouched.</string>
+    <string name="page_op_running">Working…</string>
+    <string name="page_op_done">Pages updated</string>
+    <string name="page_op_failed">The page operation failed</string>
+    <string name="pages_extracted">Extracted into a new document</string>
+
+    <!-- Export sheet -->
+    <string name="export_sheet_title">Export &amp; share</string>
+    <string name="export_format_label">Format</string>
+    <string name="export_format_pdf">PDF</string>
+    <string name="export_format_png">PNG</string>
+    <string name="export_format_jpeg">JPEG</string>
+    <string name="export_format_nanote">.nanote</string>
+    <string name="export_pdf_mode_label">Annotations</string>
+    <string name="export_mode_flattened">Flattened</string>
+    <string name="export_mode_markup">Keep text selectable</string>
+    <string name="export_mode_original">Original only</string>
+    <string name="export_mode_original_hint">Exports the untouched working document without any annotations.</string>
+    <string name="export_mode_markup_hint">Ink and images are flattened; highlights, underlines and strikethroughs become real PDF markup annotations.</string>
+    <string name="export_pages_label">Pages</string>
+    <string name="export_pages_all">All pages</string>
+    <string name="export_pages_choose">Choose pages</string>
+    <string name="export_pages_selected">%1$d of %2$d pages selected</string>
+    <string name="export_save_to_file">Save to file</string>
+    <string name="export_share">Share</string>
+    <string name="export_print">Print</string>
+    <string name="export_image_single_page_hint">Image formats export a single page (the first selected page).</string>
+
+    <!-- PDF info sheet -->
+    <string name="pdf_info_title">PDF details</string>
+    <string name="pdf_info_unavailable">No PDF information available.</string>
+    <string name="pdf_info_file">File</string>
+    <string name="pdf_info_size">Size</string>
+    <string name="pdf_info_pages">Pages</string>
+    <string name="pdf_info_doc_title">Title</string>
+    <string name="pdf_info_author">Author</string>
+    <string name="pdf_info_creator">Creator</string>
+    <string name="pdf_info_producer">Producer</string>
+    <string name="pdf_info_imported">Imported</string>
+    <string name="pdf_info_opened">Last opened</string>
+    <string name="pdf_info_text_search_note">Scanned pages without embedded text are not searchable — no handwriting or OCR recognition is performed.</string>
+
     <!-- Misc -->
     <string name="ok">OK</string>
     <string name="close">Close</string>

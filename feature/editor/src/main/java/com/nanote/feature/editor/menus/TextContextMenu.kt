@@ -28,6 +28,7 @@ import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.FormatUnderlined
 import androidx.compose.material.icons.outlined.Highlight
 import androidx.compose.material.icons.outlined.SelectAll
+import androidx.compose.material.icons.outlined.StrikethroughS
 import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material.icons.outlined.Translate
 import androidx.compose.material.icons.outlined.TravelExplore
@@ -162,6 +163,9 @@ fun TextContextMenu(
                         }
                         MenuAction(Icons.Outlined.FormatUnderlined, stringResource(R.string.action_underline)) {
                             pane.underlineSelection()
+                        }
+                        MenuAction(Icons.Outlined.StrikethroughS, stringResource(R.string.action_strikethrough)) {
+                            pane.strikeThroughSelection()
                         }
                         MenuAction(Icons.Outlined.TextFields, stringResource(R.string.action_select_text)) {
                             pane.clearTextMenu()
