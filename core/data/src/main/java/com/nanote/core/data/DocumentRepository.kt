@@ -6,12 +6,21 @@ import com.nanote.core.model.ActivityAction
 import com.nanote.core.model.CreateNotebookRequest
 import com.nanote.core.model.DocumentMeta
 import com.nanote.core.model.DocumentModel
+import com.nanote.core.model.ExportOptions
 import com.nanote.core.model.Folder
 import com.nanote.core.model.FolderTreeNode
 import com.nanote.core.model.LibraryFilter
 import com.nanote.core.model.NoteKind
 import com.nanote.core.model.NotebookSettings
+import com.nanote.core.model.PdfBookmark
+import com.nanote.core.model.PdfFileInfo
+import com.nanote.core.model.PdfPageOpResult
+import com.nanote.core.model.PdfTextHit
+import com.nanote.core.model.ReadingPosition
 import com.nanote.core.model.RecentActivityEntry
+import com.nanote.core.model.RecentSearch
+import com.nanote.core.model.SearchResults
+import com.nanote.core.model.Tag
 import java.io.File
 import java.io.OutputStream
 import kotlinx.coroutines.flow.Flow
@@ -117,4 +126,105 @@ interface DocumentRepository {
     // ---------- storage ----------
 
     suspend fun storageUsedBytes(): Long
+
+    // ------------------------------------------------------------------
+    // Part 3 — PDF engine, tags, search, bookmarks, positions, page ops
+    // ------------------------------------------------------------------
+
+    // ---------- tags ----------
+
+    /** All tags with usage counts (observable). */
+    fun observeTags(): Flow<List<Tag>>
+
+    /** Current tag names of one document (observable). */
+    fun observeDocumentTags(docId: String): Flow<List<String>>
+
+    /** Replaces the tag set of a document; creates unknown tags. */
+    suspend fun setDocumentTags(docId: String, tags: List<String>)
+
+    /** Deletes a tag everywhere. */
+    suspend fun deleteTag(name: String)
+
+    // ---------- search ----------
+
+    /** Grouped local search across titles, folders, tags and PDF text. */
+    suspend fun searchAcross(query: String, pdfTextLimit: Int = 20): SearchResults
+
+    /** Records a query in the search history (deduplicated). */
+    suspend fun recordSearch(query: String)
+
+    /** Recent search queries, most recent first. */
+    fun observeRecentSearches(limit: Int = 8): Flow<List<RecentSearch>>
+
+    /** Removes one query from the history. */
+    suspend fun deleteRecentSearch(query: String)
+
+    /** Clears the whole search history. */
+    suspend fun clearSearchHistory()
+
+    // ---------- PDF bookmarks & reading position ----------
+
+    /** Bookmarks of one document, observable. */
+    fun observeBookmarks(docId: String): Flow<List<PdfBookmark>>
+
+    /** Adds or removes a bookmark on [pageIndex]; returns the new state. */
+    suspend fun toggleBookmark(docId: String, pageIndex: Int, pdfPage: Int, title: String): Boolean
+
+    /** Deletes a bookmark by id. */
+    suspend fun deleteBookmark(bookmarkId: String)
+
+    /** Saves where the user stopped reading (page + zoom). */
+    suspend fun saveReadingPosition(docId: String, pageIndex: Int, zoomScale: Float)
+
+    /** Last saved reading position, null when none. */
+    suspend fun readingPosition(docId: String): ReadingPosition?
+
+    // ---------- PDF metadata ----------
+
+    /** File-level metadata of an imported PDF (sizes, dates, doc info). */
+    suspend fun pdfFileInfo(docId: String): PdfFileInfo?
+
+    // ---------- PDF page operations ----------
+
+    /**
+     * Deletes pages of an imported PDF (working copy only — the original
+     * source file is never touched). Annotations on removed pages are
+     * dropped; the caller must reload the document afterwards.
+     */
+    suspend fun deletePdfPages(docId: String, pageIndexes: Set<Int>): PdfPageOpResult
+
+    /** Duplicates one page (inserted right after it). */
+    suspend fun duplicatePdfPage(docId: String, pageIndex: Int): PdfPageOpResult
+
+    /** Rotates one page by 90° clockwise. */
+    suspend fun rotatePdfPage(docId: String, pageIndex: Int): PdfPageOpResult
+
+    /** Moves one page to a new position. */
+    suspend fun movePdfPage(docId: String, fromIndex: Int, toIndex: Int): PdfPageOpResult
+
+    /** Extracts selected pages into a NEW document (also implements split). */
+    suspend fun extractPdfPagesToDocument(docId: String, pageIndexes: List<Int>, title: String): String?
+
+    /** Inserts all pages of another PDF (SAF uri) at [insertAt]. */
+    suspend fun insertPdfPagesFrom(docId: String, uri: Uri, insertAt: Int): PdfPageOpResult
+
+    // ---------- exports ----------
+
+    /**
+     * Universal export with options: PDF (original / flattened / markup
+     * annotations), PNG or JPEG, optional page subset. PDFs are verified
+     * with an independent renderer before being reported as successful.
+     */
+    suspend fun exportDocument(id: String, options: ExportOptions, target: OutputStream): Boolean
+
+    /**
+     * Renders one page to a bitmap (PDFs via pdfium, notes via the offscreen
+     * page painter) at up to [maxWidthPx] wide.
+     */
+    suspend fun renderPageBitmap(id: String, pageIndex: Int, maxWidthPx: Int): Bitmap?
+
+    // ---------- text index ----------
+
+    /** (Re)builds the PDF text search index; returns indexed page count. */
+    suspend fun reindexPdfText(docId: String): Int
 }

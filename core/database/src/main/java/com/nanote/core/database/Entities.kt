@@ -38,8 +38,8 @@ data class NoteEntity(
     @ColumnInfo(defaultValue = "0") val lastOpenedAt: Long,
     @ColumnInfo(defaultValue = "0") val sortOrder: Int,
     /** Schema v3 (Part 3): imported-file metadata. */
-    @ColumnInfo(defaultValue = "0") val fileSizeBytes: Long,
-    @ColumnInfo(defaultValue = "NULL") val sourceFileName: String?
+    @ColumnInfo(defaultValue = "0") val fileSizeBytes: Long = 0L,
+    @ColumnInfo(defaultValue = "NULL") val sourceFileName: String? = null
 )
 
 /** Room row for a user folder (nested via [parentId]). */

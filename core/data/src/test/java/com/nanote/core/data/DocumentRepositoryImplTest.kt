@@ -19,6 +19,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -45,7 +46,10 @@ class DocumentRepositoryImplTest {
         db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
             .allowMainThreadQueries()
             .build()
-        repo = DocumentRepositoryImpl(context, db)
+        repo = DocumentRepositoryImpl(
+            context, db,
+            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default)
+        )
     }
 
     @After
@@ -228,5 +232,68 @@ class DocumentRepositoryImplTest {
 
         repo.deleteDocuments(setOf(id))
         assertEquals(0, repo.observeRecentActivity(10).first().size)
+    }
+
+    // ------------------------------------------------------------- Part 3
+
+    @Test
+    fun tags_assignObserveAndDelete() = runBlocking {
+        val a = repo.createNotebook(CreateNotebookRequest(title = "Lecture A"))
+        val b = repo.createNotebook(CreateNotebookRequest(title = "Lecture B"))
+        repo.setDocumentTags(a, listOf("physics", "exam"))
+        repo.setDocumentTags(b, listOf("physics"))
+
+        assertEquals(listOf("exam", "physics"), repo.observeDocumentTags(a).first().sorted())
+        val tags = repo.observeTags().first()
+        assertEquals(2, tags.size)
+        assertEquals(2, tags.first { it.name == "physics" }.usageCount)
+
+        // Search finds documents by title and tags by name.
+        val results = repo.searchAcross("physics")
+        assertEquals(2, results.documents.size)
+        assertEquals(1, results.tags.size)
+
+        repo.deleteTag("exam")
+        assertEquals(listOf("physics"), repo.observeDocumentTags(a).first())
+    }
+
+    @Test
+    fun searchHistory_recordsDeduplicatesAndClears() = runBlocking {
+        repo.recordSearch("lecture")
+        repo.recordSearch("  lecture  ") // trimmed → same query
+        repo.recordSearch("homework")
+        val recent = repo.observeRecentSearches(8).first()
+        assertEquals(2, recent.size)
+        assertEquals("homework", recent.first().query)
+
+        repo.deleteRecentSearch("homework")
+        assertEquals(1, repo.observeRecentSearches(8).first().size)
+        repo.clearSearchHistory()
+        assertEquals(0, repo.observeRecentSearches(8).first().size)
+    }
+
+    @Test
+    fun bookmarks_toggleSaveAndObserve() = runBlocking {
+        val id = repo.createNotebook(CreateNotebookRequest(title = "Doc"))
+        assertTrue(repo.toggleBookmark(id, pageIndex = 2, pdfPage = 2, title = "Ch 3"))
+        assertEquals(1, repo.observeBookmarks(id).first().size)
+        // toggling the same page removes it
+        assertFalse(repo.toggleBookmark(id, pageIndex = 2, pdfPage = 2, title = "Ch 3"))
+        assertEquals(0, repo.observeBookmarks(id).first().size)
+    }
+
+    @Test
+    fun readingPosition_roundTrip() = runBlocking {
+        val id = repo.createNotebook(CreateNotebookRequest(title = "Doc"))
+        assertNullPosition(repo.readingPosition(id))
+        repo.saveReadingPosition(id, pageIndex = 4, zoomScale = 1.75f)
+        val pos = repo.readingPosition(id)
+        assertNotNull(pos)
+        assertEquals(4, pos!!.pageIndex)
+        assertEquals(1.75f, pos.zoomScale)
+    }
+
+    private fun assertNullPosition(pos: com.nanote.core.model.ReadingPosition?) {
+        assertNull(pos)
     }
 }

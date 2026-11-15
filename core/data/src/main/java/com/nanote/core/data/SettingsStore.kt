@@ -2,6 +2,9 @@ package com.nanote.core.data
 
 import android.content.Context
 import com.nanote.core.model.AppLanguage
+import com.nanote.core.model.ExportFormat
+import com.nanote.core.model.PdfExportMode
+import com.nanote.core.model.RenderQuality
 import com.nanote.core.model.ToolbarConfig
 import com.nanote.core.model.ThemeMode
 import com.nanote.core.model.ToolConfig
@@ -22,6 +25,11 @@ private const val KEY_PRESSURE = "pressure_sensitivity"
 private const val KEY_PALM = "palm_rejection"
 private const val KEY_PREFETCH = "prefetch_pages"
 private const val KEY_PRESETS = "tool_presets"
+private const val KEY_DEFAULT_EXPORT = "default_export_format"
+private const val KEY_DEFAULT_PDF_MODE = "default_pdf_export_mode"
+private const val KEY_AUTOSAVE_ENABLED = "autosave_enabled"
+private const val KEY_AUTOSAVE_DEBOUNCE = "autosave_debounce_seconds"
+private const val KEY_RENDER_QUALITY = "pdf_render_quality"
 
 /**
  * App settings persisted with SharedPreferences + JSON (kotlinx-serialization),
@@ -59,6 +67,21 @@ class SettingsStore(private val context: Context) {
     private val _presets = MutableStateFlow(readPresets())
     val presets: StateFlow<List<ToolPreset>> = _presets
 
+    private val _defaultExportFormat = MutableStateFlow(readDefaultExport())
+    val defaultExportFormat: StateFlow<ExportFormat> = _defaultExportFormat
+
+    private val _defaultPdfExportMode = MutableStateFlow(readDefaultPdfMode())
+    val defaultPdfExportMode: StateFlow<PdfExportMode> = _defaultPdfExportMode
+
+    private val _autosaveEnabled = MutableStateFlow(prefs.getBoolean(KEY_AUTOSAVE_ENABLED, true))
+    val autosaveEnabled: StateFlow<Boolean> = _autosaveEnabled
+
+    private val _autosaveDebounceSeconds = MutableStateFlow(prefs.getInt(KEY_AUTOSAVE_DEBOUNCE, 2))
+    val autosaveDebounceSeconds: StateFlow<Int> = _autosaveDebounceSeconds
+
+    private val _renderQuality = MutableStateFlow(readRenderQuality())
+    val renderQuality: StateFlow<RenderQuality> = _renderQuality
+
     // ---------------- readers ----------------
 
     private fun readTool(): ToolConfig = try {
@@ -87,6 +110,18 @@ class SettingsStore(private val context: Context) {
     } catch (t: Throwable) {
         emptyList()
     }
+
+    private fun readDefaultExport(): ExportFormat =
+        runCatching { ExportFormat.valueOf(prefs.getString(KEY_DEFAULT_EXPORT, ExportFormat.PDF.name)!!) }
+            .getOrDefault(ExportFormat.PDF)
+
+    private fun readDefaultPdfMode(): PdfExportMode =
+        runCatching { PdfExportMode.valueOf(prefs.getString(KEY_DEFAULT_PDF_MODE, PdfExportMode.FLATTENED.name)!!) }
+            .getOrDefault(PdfExportMode.FLATTENED)
+
+    private fun readRenderQuality(): RenderQuality =
+        runCatching { RenderQuality.valueOf(prefs.getString(KEY_RENDER_QUALITY, RenderQuality.MEDIUM.name)!!) }
+            .getOrDefault(RenderQuality.MEDIUM)
 
     // ---------------- writers ----------------
 
@@ -139,5 +174,33 @@ class SettingsStore(private val context: Context) {
     fun addPreset(preset: ToolPreset) {
         val list = _presets.value.filterNot { it.name == preset.name } + preset
         setPresets(list)
+    }
+
+    // ---------------- Part 3 preferences ----------------
+
+    fun setDefaultExportFormat(format: ExportFormat) {
+        _defaultExportFormat.value = format
+        prefs.edit().putString(KEY_DEFAULT_EXPORT, format.name).apply()
+    }
+
+    fun setDefaultPdfExportMode(mode: PdfExportMode) {
+        _defaultPdfExportMode.value = mode
+        prefs.edit().putString(KEY_DEFAULT_PDF_MODE, mode.name).apply()
+    }
+
+    fun setAutosaveEnabled(enabled: Boolean) {
+        _autosaveEnabled.value = enabled
+        prefs.edit().putBoolean(KEY_AUTOSAVE_ENABLED, enabled).apply()
+    }
+
+    fun setAutosaveDebounceSeconds(seconds: Int) {
+        val safe = seconds.coerceIn(1, 30)
+        _autosaveDebounceSeconds.value = safe
+        prefs.edit().putInt(KEY_AUTOSAVE_DEBOUNCE, safe).apply()
+    }
+
+    fun setRenderQuality(quality: RenderQuality) {
+        _renderQuality.value = quality
+        prefs.edit().putString(KEY_RENDER_QUALITY, quality.name).apply()
     }
 }

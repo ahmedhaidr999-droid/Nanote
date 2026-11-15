@@ -45,6 +45,12 @@ interface NoteDao {
     @Query("SELECT * FROM notes WHERE id = :id")
     suspend fun getById(id: String): NoteEntity?
 
+    @Query("SELECT * FROM notes")
+    suspend fun getAll(): List<NoteEntity>
+
+    @Query("SELECT COALESCE(MAX(sortOrder), 0) FROM notes")
+    suspend fun getMaxSortOrder(): Int
+
     @Query("SELECT * FROM notes WHERE title LIKE '%' || :q || '%' ORDER BY updatedAt DESC")
     suspend fun search(q: String): List<NoteEntity>
 
