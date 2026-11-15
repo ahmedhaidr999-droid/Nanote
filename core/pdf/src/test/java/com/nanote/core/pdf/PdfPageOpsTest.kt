@@ -1,5 +1,8 @@
 package com.nanote.core.pdf
 
+import android.content.Context
+import androidx.test.core.app.ApplicationProvider
+import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.PDPage
 import com.tom_roush.pdfbox.pdmodel.PDPageContentStream
@@ -29,6 +32,9 @@ class PdfPageOpsTest {
 
     @Before
     fun setUp() {
+        // pdfbox-android loads its fonts/resources through the asset
+        // pipeline — the resource loader must be initialized first.
+        PDFBoxResourceLoader.init(ApplicationProvider.getApplicationContext<Context>())
         dir = Files.createTempDirectory("nanote-pageops").toFile()
     }
 
