@@ -5,6 +5,7 @@ import com.nanote.core.model.DocumentContent
 import com.nanote.core.model.HighlightAnnotation
 import com.nanote.core.model.StrikeThroughAnnotation
 import com.nanote.core.model.UnderlineAnnotation
+import com.tom_roush.pdfbox.cos.COSName
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.PDPage
 import com.tom_roush.pdfbox.pdmodel.common.PDRectangle
@@ -85,7 +86,10 @@ object PdfMarkupAnnotator {
                     ),
                     PDDeviceRGB.INSTANCE
                 )
-                annot.printed = true
+                // /F bit 3 (value 4) = Print: markup annotations print with
+                // the page. Set through the COS dictionary — the typed flag
+                // helpers differ across pdfbox-android versions.
+                annot.cosObject().setFlag(COSName.F, 4, true)
                 page.annotations.add(annot)
             } catch (t: Throwable) {
                 AppLog.w(TAG, "markup failed: ${t.message}")
