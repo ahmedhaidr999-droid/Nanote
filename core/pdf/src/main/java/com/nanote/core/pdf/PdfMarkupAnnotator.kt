@@ -86,10 +86,10 @@ object PdfMarkupAnnotator {
                     ),
                     PDDeviceRGB.INSTANCE
                 )
-                // /F bit 3 (value 4) = Print: markup annotations print with
-                // the page. Set through the COS dictionary — the typed flag
+                // /F = 4 (Print flag): markup annotations print with the
+                // page. Set through the COS dictionary — the typed flag
                 // helpers differ across pdfbox-android versions.
-                annot.cosObject().setFlag(COSName.F, 4, true)
+                annot.cosObject().setInt(COSName.F, 4)
                 page.annotations.add(annot)
             } catch (t: Throwable) {
                 AppLog.w(TAG, "markup failed: ${t.message}")
