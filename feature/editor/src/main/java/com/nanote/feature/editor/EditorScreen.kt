@@ -120,8 +120,6 @@ fun EditorScreen(
     var showExport by remember { mutableStateOf(false) }
     var pendingExport by remember { mutableStateOf<ExportOptions?>(null) }
 
-    val context = LocalContext.current
-
     fun exportResult(uri: Uri?) {
         val options = pendingExport
         pendingExport = null
