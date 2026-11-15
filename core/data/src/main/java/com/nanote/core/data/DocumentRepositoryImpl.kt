@@ -12,7 +12,11 @@ import android.os.ParcelFileDescriptor
 import com.nanote.core.database.AppDatabase
 import com.nanote.core.database.FolderEntity
 import com.nanote.core.database.NoteEntity
+import com.nanote.core.database.PdfBookmarkEntity
 import com.nanote.core.database.PdfTextPageEntity
+import com.nanote.core.database.ReadingPositionEntity
+import com.nanote.core.database.SearchHistoryEntity
+import com.nanote.core.database.TagEntity
 import com.nanote.core.storage.format.DocumentFormat
 import com.nanote.core.storage.format.DocumentMigrations
 import com.nanote.core.model.ActivityAction
@@ -859,7 +863,7 @@ class DocumentRepositoryImpl @Inject constructor(
             val now = System.currentTimeMillis()
             for (t in clean) {
                 tagDao.upsert(
-                    com.nanote.core.database.TagEntity(name = t, color = 0xFF2563EB, createdAt = now)
+                    TagEntity(name = t, color = 0xFF2563EB, createdAt = now)
                 )
             }
             tagDao.setNoteTags(docId, clean)
@@ -951,7 +955,7 @@ class DocumentRepositoryImpl @Inject constructor(
                 false
             } else {
                 bookmarkDao.upsert(
-                    com.nanote.core.database.PdfBookmarkEntity(
+                    PdfBookmarkEntity(
                         id = newId(), documentId = docId, pageIndex = pageIndex,
                         pdfPage = pdfPage, title = title, createdAt = System.currentTimeMillis()
                     )

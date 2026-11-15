@@ -35,6 +35,7 @@ dependencies {
     api(project(":core:common"))
     api(project(":core:database"))
     api(project(":core:storage"))
+    implementation(project(":core:pdf"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.hilt.android)
