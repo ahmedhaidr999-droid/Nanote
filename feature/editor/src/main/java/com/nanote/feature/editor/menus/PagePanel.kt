@@ -33,6 +33,7 @@ import androidx.compose.material.icons.outlined.PostAdd
 import androidx.compose.material.icons.outlined.RotateRight
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -67,6 +68,7 @@ import com.nanote.core.model.PdfBookmark
  * per-page operations (rotate / duplicate / move / delete) and the
  * insert-pages-from-PDF action for imported documents.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PagePanel(
     vm: EditorViewModel,
