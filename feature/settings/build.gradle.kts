@@ -29,6 +29,7 @@ dependencies {
     implementation(project(":core:design"))
     implementation(project(":core:model"))
     implementation(project(":core:data"))
+    implementation(project(":core:storage"))
     implementation(project(":core:common"))
     implementation(project(":feature:notebooks"))
 

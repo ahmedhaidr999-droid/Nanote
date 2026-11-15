@@ -35,4 +35,39 @@
     <string name="size_kb">%1$.1f ك.ب</string>
     <string name="size_mb">%1$.1f م.ب</string>
     <string name="size_gb">%1$.1f ج.ب</string>
+
+    <!-- Part 3: export, PDF & autosave, backup & restore -->
+    <string name="settings_export">التصدير والمشاركة</string>
+    <string name="default_export_format">صيغة التصدير الافتراضية</string>
+    <string name="export_format_pdf">PDF</string>
+    <string name="export_format_png">PNG</string>
+    <string name="export_format_jpeg">JPEG</string>
+    <string name="export_format_nanote">‎.nanote</string>
+    <string name="default_pdf_export_mode">وضع التعليقات التوضيحية الافتراضي لـ PDF</string>
+    <string name="export_mode_flattened">مدمجة</string>
+    <string name="export_mode_markup">إبقاء النص قابلاً للتحديد</string>
+    <string name="export_mode_original">الأصل فقط</string>
+    <string name="settings_pdf_autosave">PDF والحفظ التلقائي</string>
+    <string name="render_quality">جودة عرض PDF</string>
+    <string name="quality_low">منخفضة</string>
+    <string name="quality_medium">متوازنة</string>
+    <string name="quality_high">عالية</string>
+    <string name="autosave_enabled">الحفظ التلقائي</string>
+    <string name="autosave_enabled_desc">يحفظ تلقائيًا أثناء الكتابة. يُنفَّذ حفظ نهائي دائمًا عند الخروج.</string>
+    <string name="autosave_delay">الحفظ بعد %1$d ث من آخر تغيير</string>
+    <string name="settings_backup">النسخ الاحتياطي والاستعادة</string>
+    <string name="backup_desc">أنشئ أرشيفًا محليًا لكل المستندات أو استعد من أرشيف. يعمل دون اتصال بالكامل.</string>
+    <string name="backup_all">نسخ احتياطي لكل المستندات</string>
+    <string name="restore_backup">استعادة من نسخة احتياطية</string>
+    <string name="backup_done">تم إنشاء النسخة الاحتياطية</string>
+    <string name="backup_failed">فشلت النسخة الاحتياطية</string>
+    <string name="backup_invalid">هذا الملف ليس نسخة احتياطية صالحة لـ Nanote</string>
+    <string name="backup_working">جارٍ التنفيذ…</string>
+    <string name="restore_preview_title">استعادة هذه النسخة الاحتياطية؟</string>
+    <string name="restore_preview_summary">سيُضاف %1$d دفترًا و%2$d من ملفات PDF إلى مكتبتك.</string>
+    <string name="restore_preview_more">…و%1$d أخرى</string>
+    <string name="restore_preview_note">تُضاف المستندات المستعادة كنسخ — لا يُستبدل أي شيء موجود أو يُحذف.</string>
+    <string name="restore_done_title">اكتملت الاستعادة</string>
+    <string name="restore_done_summary">تمت استعادة %1$d دفترًا و%2$d من ملفات PDF.</string>
+    <string name="restore_renamed">أُعيدت تسمية %1$d من المستندات لتجنب التكرار.</string>
 </resources>

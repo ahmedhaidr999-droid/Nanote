@@ -1,12 +1,16 @@
 package com.nanote.feature.settings
 
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -25,13 +29,18 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.compose.material.icons.outlined.Draw
+import androidx.compose.material.icons.outlined.IosShare
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Palette
+import androidx.compose.material.icons.outlined.Restore
 import androidx.compose.material.icons.outlined.Storage
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -39,10 +48,12 @@ import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -69,8 +80,12 @@ import com.nanote.core.design.theme.Dimens
 import com.nanote.core.design.theme.accentSwatch
 import com.nanote.core.model.AccentColor
 import com.nanote.core.model.AppLanguage
+import com.nanote.core.model.ExportFormat
 import com.nanote.core.model.NotebookDefaults
+import com.nanote.core.model.PdfExportMode
+import com.nanote.core.model.RenderQuality
 import com.nanote.core.model.ThemeMode
+import com.nanote.core.storage.format.BackupFormat
 import com.nanote.feature.notebooks.NotebookFormDialog
 import com.nanote.feature.notebooks.NotebookFormState
 
@@ -78,7 +93,7 @@ import com.nanote.feature.notebooks.NotebookFormState
  * Settings: appearance (theme, dynamic colors, accent, language), library
  * defaults, new-notebook defaults, editor pen behaviour, storage and about.
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun SettingsScreen(
     onBack: () -> Unit,
@@ -91,8 +106,45 @@ fun SettingsScreen(
     val pressure by vm.editorSettings.pressureSensitivity.collectAsStateWithLifecycle()
     val palm by vm.editorSettings.palmRejection.collectAsStateWithLifecycle()
     val prefetch by vm.editorSettings.prefetchPages.collectAsStateWithLifecycle()
+    val defaultExportFormat by vm.editorSettings.defaultExportFormat.collectAsStateWithLifecycle()
+    val defaultPdfMode by vm.editorSettings.defaultPdfExportMode.collectAsStateWithLifecycle()
+    val autosaveEnabled by vm.editorSettings.autosaveEnabled.collectAsStateWithLifecycle()
+    val autosaveDebounce by vm.editorSettings.autosaveDebounceSeconds.collectAsStateWithLifecycle()
+    val renderQuality by vm.editorSettings.renderQuality.collectAsStateWithLifecycle()
+    val backupBusy by vm.backupBusy.collectAsStateWithLifecycle()
+    val backupMessage by vm.backupMessage.collectAsStateWithLifecycle()
+    val restorePreview by vm.restorePreview.collectAsStateWithLifecycle()
+    val restoreResult by vm.restoreResult.collectAsStateWithLifecycle()
 
     var showDefaultsForm by remember { mutableStateOf(false) }
+
+    val backupLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/zip")
+    ) { uri ->
+        if (uri != null) vm.createBackup(uri)
+    }
+    val restoreLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) vm.previewRestore(uri)
+    }
+
+    LaunchedEffect(backupMessage) {
+        when (backupMessage) {
+            "ok" -> {
+                Toast.makeText(context, context.getString(R.string.backup_done), Toast.LENGTH_LONG).show()
+                vm.dismissMessage()
+            }
+            "failed" -> {
+                Toast.makeText(context, context.getString(R.string.backup_failed), Toast.LENGTH_LONG).show()
+                vm.dismissMessage()
+            }
+            "invalid" -> {
+                Toast.makeText(context, context.getString(R.string.backup_invalid), Toast.LENGTH_LONG).show()
+                vm.dismissMessage()
+            }
+        }
+    }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -285,6 +337,137 @@ fun SettingsScreen(
                 }
             }
 
+            // ----- Export defaults (Part 3) -----
+            item(key = "export") {
+                SettingsSectionCard(
+                    title = stringResource(R.string.settings_export),
+                    icon = Icons.Outlined.IosShare
+                ) {
+                    Text(
+                        text = stringResource(R.string.default_export_format),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(Dimens.paddingSm),
+                        modifier = Modifier.padding(vertical = Dimens.paddingSm)
+                    ) {
+                        ExportFormat.entries.forEach { format ->
+                            FilterChip(
+                                selected = defaultExportFormat == format,
+                                onClick = { vm.setDefaultExportFormat(format) },
+                                label = { Text(exportFormatLabel(format)) }
+                            )
+                        }
+                    }
+                    Text(
+                        text = stringResource(R.string.default_pdf_export_mode),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(Dimens.paddingSm),
+                        modifier = Modifier.padding(vertical = Dimens.paddingSm)
+                    ) {
+                        PdfExportMode.entries.forEach { mode ->
+                            FilterChip(
+                                selected = defaultPdfMode == mode,
+                                onClick = { vm.setDefaultPdfExportMode(mode) },
+                                label = { Text(pdfModeLabel(mode)) }
+                            )
+                        }
+                    }
+                }
+            }
+
+            // ----- PDF rendering & autosave (Part 3) -----
+            item(key = "pdf-autosave") {
+                SettingsSectionCard(
+                    title = stringResource(R.string.settings_pdf_autosave),
+                    icon = Icons.Outlined.Draw
+                ) {
+                    Text(
+                        text = stringResource(R.string.render_quality),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(Dimens.paddingSm),
+                        modifier = Modifier.padding(vertical = Dimens.paddingSm)
+                    ) {
+                        RenderQuality.entries.forEach { quality ->
+                            FilterChip(
+                                selected = renderQuality == quality,
+                                onClick = { vm.setRenderQuality(quality) },
+                                label = { Text(renderQualityLabel(quality)) }
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(Dimens.paddingSm))
+                    LabelledSwitchRow(
+                        title = stringResource(R.string.autosave_enabled),
+                        subtitle = stringResource(R.string.autosave_enabled_desc),
+                        checked = autosaveEnabled,
+                        onCheckedChange = vm::setAutosaveEnabled
+                    )
+                    if (autosaveEnabled) {
+                        Text(
+                            text = stringResource(R.string.autosave_delay, autosaveDebounce),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Slider(
+                            value = autosaveDebounce.toFloat(),
+                            onValueChange = { vm.setAutosaveDebounceSeconds(it.toInt()) },
+                            valueRange = 1f..10f,
+                            steps = 8,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+            }
+
+            // ----- Backup & restore (Part 3) -----
+            item(key = "backup") {
+                SettingsSectionCard(
+                    title = stringResource(R.string.settings_backup),
+                    icon = Icons.Outlined.Restore
+                ) {
+                    Text(
+                        text = stringResource(R.string.backup_desc),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(Dimens.paddingSm))
+                    if (backupBusy) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(Dimens.paddingSm)
+                        ) {
+                            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                            Text(
+                                stringResource(R.string.backup_working),
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+                        Spacer(Modifier.height(Dimens.paddingSm))
+                    }
+                    NanoteSecondaryButton(
+                        text = stringResource(R.string.backup_all),
+                        onClick = {
+                            backupLauncher.launch(BackupFormat.defaultFileName(System.currentTimeMillis()))
+                        },
+                        leadingIcon = Icons.Outlined.Storage
+                    )
+                    Spacer(Modifier.height(Dimens.paddingSm))
+                    NanoteSecondaryButton(
+                        text = stringResource(R.string.restore_backup),
+                        onClick = { restoreLauncher.launch(arrayOf("*/*")) },
+                        leadingIcon = Icons.Outlined.Restore
+                    )
+                }
+            }
+
             // ----- Storage -----
             item(key = "storage") {
                 SettingsSectionCard(
@@ -382,6 +565,101 @@ fun SettingsScreen(
             showTitleField = false
         )
     }
+
+    // ----- restore preview dialog -----
+    restorePreview?.let { preview ->
+        AlertDialog(
+            onDismissRequest = { vm.cancelRestore() },
+            title = { Text(stringResource(R.string.restore_preview_title)) },
+            text = {
+                Column {
+                    Text(
+                        stringResource(
+                            R.string.restore_preview_summary,
+                            preview.manifest.entries.count { it.kind == "NOTE" },
+                            preview.manifest.entries.count { it.kind == "PDF" }
+                        )
+                    )
+                    Spacer(Modifier.height(Dimens.paddingSm))
+                    preview.manifest.entries.take(8).forEach { entry ->
+                        Text(
+                            "• ${entry.title} (${entry.pageCount}p)",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    if (preview.manifest.entries.size > 8) {
+                        Text(
+                            stringResource(R.string.restore_preview_more, preview.manifest.entries.size - 8),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Spacer(Modifier.height(Dimens.paddingSm))
+                    Text(
+                        stringResource(R.string.restore_preview_note),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = { vm.confirmRestore() }) {
+                    Text(stringResource(CommonR.string.confirm))
+                }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { vm.cancelRestore() }) {
+                    Text(stringResource(CommonR.string.cancel))
+                }
+            }
+        )
+    }
+
+    // ----- restore result dialog -----
+    restoreResult?.let { result ->
+        AlertDialog(
+            onDismissRequest = { vm.dismissRestoreResult() },
+            title = { Text(stringResource(R.string.restore_done_title)) },
+            text = {
+                Text(
+                    stringResource(
+                        R.string.restore_done_summary,
+                        result.restoredNotebooks,
+                        result.restoredPdfs
+                    ) +
+                        (if (result.renamedTitles.isNotEmpty()) "\n" + stringResource(R.string.restore_renamed, result.renamedTitles.size) else "")
+                )
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = { vm.dismissRestoreResult() }) {
+                    Text(stringResource(CommonR.string.confirm))
+                }
+            }
+        )
+    }
+}
+
+@Composable
+private fun exportFormatLabel(format: ExportFormat): String = when (format) {
+    ExportFormat.PDF -> stringResource(R.string.export_format_pdf)
+    ExportFormat.PNG -> stringResource(R.string.export_format_png)
+    ExportFormat.JPEG -> stringResource(R.string.export_format_jpeg)
+    ExportFormat.NANOTE -> stringResource(R.string.export_format_nanote)
+}
+
+@Composable
+private fun pdfModeLabel(mode: PdfExportMode): String = when (mode) {
+    PdfExportMode.FLATTENED -> stringResource(R.string.export_mode_flattened)
+    PdfExportMode.WITH_MARKUP_ANNOTATIONS -> stringResource(R.string.export_mode_markup)
+    PdfExportMode.ORIGINAL -> stringResource(R.string.export_mode_original)
+}
+
+@Composable
+private fun renderQualityLabel(quality: RenderQuality): String = when (quality) {
+    RenderQuality.LOW -> stringResource(R.string.quality_low)
+    RenderQuality.MEDIUM -> stringResource(R.string.quality_medium)
+    RenderQuality.HIGH -> stringResource(R.string.quality_high)
 }
 
 @Composable
