@@ -7,6 +7,11 @@
     <string name="see_all">عرض الكل</string>
     <string name="search_documents_section">المستندات</string>
     <string name="search_folders_section">المجلدات</string>
+    <string name="search_tags_section">الوسوم</string>
+    <string name="search_pdf_text_section">داخل نص PDF</string>
+    <string name="search_pdf_text_page">صفحة %1$d</string>
+    <string name="search_remove_history">إزالة من سجل البحث</string>
+    <string name="search_clear_history">مسح السجل</string>
     <string name="import_failed">فشل الاستيراد</string>
     <string name="activity_created">تم إنشاء \"%1$s\"</string>
     <string name="activity_opened">تم فتح \"%1$s\"</string>

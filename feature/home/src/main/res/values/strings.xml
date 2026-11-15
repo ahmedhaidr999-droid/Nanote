@@ -7,6 +7,11 @@
     <string name="see_all">See all</string>
     <string name="search_documents_section">Documents</string>
     <string name="search_folders_section">Folders</string>
+    <string name="search_tags_section">Tags</string>
+    <string name="search_pdf_text_section">Inside PDF text</string>
+    <string name="search_pdf_text_page">Page %1$d</string>
+    <string name="search_remove_history">Remove from search history</string>
+    <string name="search_clear_history">Clear history</string>
     <string name="import_failed">Import failed</string>
     <string name="activity_created">Created \"%1$s\"</string>
     <string name="activity_opened">Opened \"%1$s\"</string>

@@ -14,7 +14,11 @@ import com.nanote.core.model.Folder
 import com.nanote.core.model.FolderTreeNode
 import com.nanote.core.model.LibraryFilter
 import com.nanote.core.model.NotebookDefaults
+import com.nanote.core.model.PdfTextHit
 import com.nanote.core.model.RecentActivityEntry
+import com.nanote.core.model.RecentSearch
+import com.nanote.core.model.SearchResults
+import com.nanote.core.model.Tag
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -70,6 +74,33 @@ class HomeViewModel @Inject constructor(
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    /** Part 3: grouped results incl. tags + PDF text (null when idle). */
+    val fullSearch: StateFlow<SearchResults?> = query
+        .debounce(QUERY_DEBOUNCE_MS)
+        .flatMapLatest { q ->
+            if (q.isBlank()) flowOf(null)
+            else kotlinx.coroutines.flow.flow {
+                emit(repo.searchAcross(q))
+            }
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    /** Tags matching the current query. */
+    val searchTags: StateFlow<List<Tag>> = query
+        .debounce(QUERY_DEBOUNCE_MS)
+        .flatMapLatest { q ->
+            if (q.isBlank()) flowOf(emptyList())
+            else repo.observeTags().map { tags ->
+                tags.filter { it.name.contains(q, ignoreCase = true) }
+            }
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** Recent searches shown as suggestion chips while the box is empty. */
+    val recentSearches: StateFlow<List<RecentSearch>> =
+        repo.observeRecentSearches(8)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
     val recent: StateFlow<List<DocumentMeta>> = repo.observeRecent(10)
         .map { DocumentSorter.byLastActivity(it) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -100,6 +131,23 @@ class HomeViewModel @Inject constructor(
 
     fun setQuery(value: String) {
         query.value = value
+    }
+
+    /** Records a completed search (called when a result is opened). */
+    fun recordSearch() {
+        val q = query.value.trim()
+        if (q.isEmpty()) return
+        viewModelScope.launch {
+            runCatching { repo.recordSearch(q) }
+        }
+    }
+
+    fun deleteRecentSearch(q: String) {
+        viewModelScope.launch { runCatching { repo.deleteRecentSearch(q) } }
+    }
+
+    fun clearSearchHistory() {
+        viewModelScope.launch { runCatching { repo.clearSearchHistory() } }
     }
 
     // ------------------------------------------------------------- actions

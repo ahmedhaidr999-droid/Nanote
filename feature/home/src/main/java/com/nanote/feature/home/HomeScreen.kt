@@ -7,7 +7,9 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,6 +24,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.MenuBook
@@ -30,9 +33,11 @@ import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.DriveFileMove
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.DriveFileRenameOutline
 import androidx.compose.material.icons.outlined.EditNote
+import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.SearchOff
 import androidx.compose.material.icons.outlined.Settings
@@ -104,6 +109,9 @@ fun HomeScreen(
     val query by vm.query.collectAsStateWithLifecycle()
     val searchResults by vm.searchResults.collectAsStateWithLifecycle()
     val searchFolders by vm.searchFolders.collectAsStateWithLifecycle()
+    val searchTags by vm.searchTags.collectAsStateWithLifecycle()
+    val fullSearch by vm.fullSearch.collectAsStateWithLifecycle()
+    val recentSearches by vm.recentSearches.collectAsStateWithLifecycle()
     val recent by vm.recent.collectAsStateWithLifecycle()
     val favorites by vm.favorites.collectAsStateWithLifecycle()
     val notebooks by vm.notebooks.collectAsStateWithLifecycle()
@@ -222,6 +230,43 @@ fun HomeScreen(
             }
 
             if (!searching) {
+                // ---- recent searches (suggestion chips) ----
+                if (showSearch && recentSearches.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .padding(horizontal = Dimens.paddingMd, vertical = Dimens.paddingXs),
+                        horizontalArrangement = Arrangement.spacedBy(Dimens.paddingSm),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        recentSearches.forEach { entry ->
+                            androidx.compose.material3.AssistChip(
+                                onClick = { vm.setQuery(entry.query) },
+                                label = { Text(entry.query, maxLines = 1) },
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.Outlined.History,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                },
+                                trailingIcon = {
+                                    Icon(
+                                        Icons.Outlined.Close,
+                                        contentDescription = stringResource(R.string.search_remove_history),
+                                        modifier = Modifier
+                                            .size(16.dp)
+                                            .clickable { vm.deleteRecentSearch(entry.query) }
+                                    )
+                                }
+                            )
+                        }
+                        androidx.compose.material3.TextButton(onClick = { vm.clearSearchHistory() }) {
+                            Text(stringResource(R.string.search_clear_history))
+                        }
+                    }
+                }
                 // ---- Quick actions ----
                 Row(
                     modifier = Modifier
@@ -277,6 +322,7 @@ fun HomeScreen(
                     verticalArrangement = Arrangement.spacedBy(Dimens.paddingSm)
                 ) {
                     if (searching) {
+                        val pdfTextHits = fullSearch?.pdfTextHits.orEmpty()
                         item(key = "search-docs-header") {
                             SectionHeader(
                                 title = stringResource(R.string.search_documents_section),
@@ -285,7 +331,7 @@ fun HomeScreen(
                             )
                         }
                         val results = searchResults.orEmpty()
-                        if (results.isEmpty() && searchFolders.isEmpty()) {
+                        if (results.isEmpty() && searchFolders.isEmpty() && searchTags.isEmpty() && pdfTextHits.isEmpty()) {
                             item(key = "search-empty") {
                                 EmptyStateView(
                                     icon = Icons.Outlined.SearchOff,
@@ -299,9 +345,48 @@ fun HomeScreen(
                             val meta = results[index]
                             HomeDocumentRow(
                                 meta = meta,
-                                onClick = { onOpenDocument(meta.id) },
+                                onClick = {
+                                    vm.recordSearch()
+                                    onOpenDocument(meta.id)
+                                },
                                 onLongClick = { actionsTarget = meta }
                             )
+                        }
+                        if (searchTags.isNotEmpty()) {
+                            item(key = "search-tags-header") {
+                                SectionHeader(title = stringResource(R.string.search_tags_section))
+                            }
+                            item(key = "search-tags-row") {
+                                Row(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(Dimens.paddingSm)
+                                ) {
+                                    searchTags.forEach { tag ->
+                                        androidx.compose.material3.FilterChip(
+                                            selected = false,
+                                            onClick = { vm.setQuery(tag.name) },
+                                            label = { Text("${tag.name} (${tag.usageCount})") }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        if (pdfTextHits.isNotEmpty()) {
+                            item(key = "search-pdf-text-header") {
+                                SectionHeader(title = stringResource(R.string.search_pdf_text_section))
+                            }
+                            items(pdfTextHits.size, key = { "pdftext-${pdfTextHits[it].documentId}-${pdfTextHits[it].pageIndex}" }) { index ->
+                                val hit = pdfTextHits[index]
+                                PdfTextHitRow(
+                                    hit = hit,
+                                    onClick = {
+                                        vm.recordSearch()
+                                        onOpenDocument(hit.documentId)
+                                    }
+                                )
+                            }
                         }
                         if (searchFolders.isNotEmpty()) {
                             item(key = "search-folders-header") {
@@ -646,3 +731,54 @@ private fun Modifier.combinedClickableRow(
     onClick: () -> Unit,
     onLongClick: () -> Unit
 ): Modifier = this.combinedClickable(onClick = onClick, onLongClick = onLongClick)
+
+/** One searchable-PDF text match: document + page + surrounding snippet. */
+@Composable
+private fun PdfTextHitRow(
+    hit: com.nanote.core.model.PdfTextHit,
+    onClick: () -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(Dimens.radiusMd),
+        color = MaterialTheme.colorScheme.surface,
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickableRow(onClick = onClick, onLongClick = onClick)
+    ) {
+        Row(
+            Modifier.padding(horizontal = Dimens.paddingMd, vertical = Dimens.paddingSm),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Dimens.paddingMd)
+        ) {
+            Icon(
+                Icons.AutoMirrored.Filled.MenuBook,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(28.dp)
+            )
+            Column(Modifier.weight(1f)) {
+                Text(
+                    hit.documentTitle,
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    stringResource(R.string.search_pdf_text_page, hit.pageIndex + 1),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                if (hit.snippet.isNotBlank()) {
+                    Text(
+                        hit.snippet,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+    }
+}
