@@ -473,6 +473,16 @@ class CanvasView @JvmOverloads constructor(
                 renderer.drawUnderline(canvas, x0, y, x1, u.color, u.opacity)
             }
         }
+        for (s in doc.strikeThroughs) {
+            if (s.page != page) continue
+            for (r in s.rects) {
+                val x0 = left + r[0] * pageW
+                val yMid = top + ((r[1] + r[3]) / 2f) * pageH
+                val x1 = left + r[2] * pageW
+                if (x1 < viewL || x0 > viewR || yMid < viewT - 10 || yMid > viewB + 10) continue
+                renderer.drawStrikeThrough(canvas, x0, yMid, x1, s.color, s.opacity)
+            }
+        }
 
         // images
         for (img in doc.images) {

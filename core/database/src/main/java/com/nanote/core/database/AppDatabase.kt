@@ -13,14 +13,29 @@ import androidx.sqlite.db.SupportSQLiteDatabase
  * powers the library lists, search, favorites, folder tree and activity feed.
  */
 @Database(
-    entities = [NoteEntity::class, FolderEntity::class, RecentActivityEntity::class],
-    version = 2,
+    entities = [
+        NoteEntity::class,
+        FolderEntity::class,
+        RecentActivityEntity::class,
+        TagEntity::class,
+        NoteTagEntity::class,
+        PdfTextPageEntity::class,
+        PdfBookmarkEntity::class,
+        ReadingPositionEntity::class,
+        SearchHistoryEntity::class
+    ],
+    version = 3,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun noteDao(): NoteDao
     abstract fun folderDao(): FolderDao
     abstract fun recentActivityDao(): RecentActivityDao
+    abstract fun tagDao(): TagDao
+    abstract fun pdfTextDao(): PdfTextDao
+    abstract fun bookmarkDao(): BookmarkDao
+    abstract fun readingPositionDao(): ReadingPositionDao
+    abstract fun searchHistoryDao(): SearchHistoryDao
 
     companion object {
         const val NAME = "nanote.db"
@@ -60,9 +75,86 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v2 → v3 (Part 3 — PDF engine, local storage, search & export):
+         * - notes: imported-file metadata (fileSizeBytes, sourceFileName)
+         * - new tags + note_tags tables (document tagging)
+         * - new pdf_text_pages table (local full-text search index)
+         * - new pdf_bookmarks table
+         * - new reading_positions table
+         * - new search_history table
+         */
+        val MIGRATION_2_3: Migration = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE notes ADD COLUMN fileSizeBytes INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE notes ADD COLUMN sourceFileName TEXT DEFAULT NULL")
+
+                db.execSQL(
+                    """CREATE TABLE IF NOT EXISTS tags (
+                        name TEXT NOT NULL PRIMARY KEY,
+                        color INTEGER NOT NULL,
+                        createdAt INTEGER NOT NULL
+                    )"""
+                )
+                db.execSQL(
+                    """CREATE TABLE IF NOT EXISTS note_tags (
+                        noteId TEXT NOT NULL,
+                        tagName TEXT NOT NULL,
+                        PRIMARY KEY(noteId, tagName),
+                        FOREIGN KEY(noteId) REFERENCES notes(id) ON UPDATE NO ACTION ON DELETE CASCADE,
+                        FOREIGN KEY(tagName) REFERENCES tags(name) ON UPDATE NO ACTION ON DELETE CASCADE
+                    )"""
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_note_tags_noteId ON note_tags(noteId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_note_tags_tagName ON note_tags(tagName)")
+
+                db.execSQL(
+                    """CREATE TABLE IF NOT EXISTS pdf_text_pages (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        documentId TEXT NOT NULL,
+                        pageIndex INTEGER NOT NULL,
+                        pdfPage INTEGER NOT NULL,
+                        text TEXT NOT NULL,
+                        FOREIGN KEY(documentId) REFERENCES notes(id) ON UPDATE NO ACTION ON DELETE CASCADE
+                    )"""
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_pdf_text_pages_documentId ON pdf_text_pages(documentId)")
+
+                db.execSQL(
+                    """CREATE TABLE IF NOT EXISTS pdf_bookmarks (
+                        id TEXT NOT NULL PRIMARY KEY,
+                        documentId TEXT NOT NULL,
+                        pageIndex INTEGER NOT NULL,
+                        pdfPage INTEGER NOT NULL,
+                        title TEXT NOT NULL,
+                        createdAt INTEGER NOT NULL,
+                        FOREIGN KEY(documentId) REFERENCES notes(id) ON UPDATE NO ACTION ON DELETE CASCADE
+                    )"""
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_pdf_bookmarks_documentId ON pdf_bookmarks(documentId)")
+
+                db.execSQL(
+                    """CREATE TABLE IF NOT EXISTS reading_positions (
+                        documentId TEXT NOT NULL PRIMARY KEY,
+                        pageIndex INTEGER NOT NULL,
+                        zoomScale REAL NOT NULL,
+                        savedAt INTEGER NOT NULL,
+                        FOREIGN KEY(documentId) REFERENCES notes(id) ON UPDATE NO ACTION ON DELETE CASCADE
+                    )"""
+                )
+
+                db.execSQL(
+                    """CREATE TABLE IF NOT EXISTS search_history (
+                        query TEXT NOT NULL PRIMARY KEY,
+                        searchedAt INTEGER NOT NULL
+                    )"""
+                )
+            }
+        }
+
         fun build(context: Context): AppDatabase =
             Room.databaseBuilder(context, AppDatabase::class.java, NAME)
-                .addMigrations(MIGRATION_1_2)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                 .build()
     }
 }

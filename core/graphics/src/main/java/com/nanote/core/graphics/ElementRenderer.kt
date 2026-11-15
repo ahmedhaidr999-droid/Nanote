@@ -370,6 +370,12 @@ class ElementRenderer(private val context: Context) {
         c.drawLine(x0, y, x1, y, strokePaint)
     }
 
+    fun drawStrikeThrough(c: Canvas, x0: Float, y: Float, x1: Float, color: Long, opacityPct: Int) {
+        strokePaint.color = colorOf(color, paintAlphaOf(opacityPct))
+        strokePaint.strokeWidth = 1.6f
+        c.drawLine(x0, y, x1, y, strokePaint)
+    }
+
     fun clearCaches() {
         strokePathCache.clear()
         shapePathCache.clear()

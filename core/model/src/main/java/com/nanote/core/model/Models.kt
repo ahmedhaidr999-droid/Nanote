@@ -125,6 +125,15 @@ data class UnderlineAnnotation(
 )
 
 @Serializable
+data class StrikeThroughAnnotation(
+    val id: String,
+    val page: Int,
+    val color: Long = 0xFFEF4444,
+    val opacity: Int = 100,
+    val rects: List<RelRect> = emptyList()
+)
+
+@Serializable
 data class PageDef(
     val index: Int,
     val width: Float = 595f,
@@ -142,7 +151,8 @@ data class DocumentContent(
     val texts: List<TextElement> = emptyList(),
     val images: List<ImageElement> = emptyList(),
     val highlights: List<HighlightAnnotation> = emptyList(),
-    val underlines: List<UnderlineAnnotation> = emptyList()
+    val underlines: List<UnderlineAnnotation> = emptyList(),
+    val strikeThroughs: List<StrikeThroughAnnotation> = emptyList()
 )
 
 // ---------------------------------------------------------------------------

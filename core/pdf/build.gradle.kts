@@ -21,6 +21,7 @@ android {
 
 dependencies {
     implementation(project(":core:common"))
+    implementation(project(":core:model"))
     // androidx.core provides the notification compat styles that pdfium's
     // resources reference (single-module v1.0.0 had it transitively).
     implementation(libs.androidx.core.ktx)
