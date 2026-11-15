@@ -126,3 +126,19 @@ rasterize the first page; a failed verification fails the export.
 * `duplicatePage` shares page resources with the original — valid PDF,
   but duplicated pages are not independently editable inside the PDF file
   itself (annotations are still separate in Nanote's vector layer).
+
+## 9. Part 4 integration changes
+
+* `PdfContentPainter.drawShape` now draws **all nine shape kinds** — the
+  Part 2 branch added double arrow, rounded rect (chamfered-corner
+  approximation), ellipse and polygon (normalized vertices) to the model,
+  and Part 4 ported those branches into this painter so exports match the
+  canvas. Covered by `MergedContentPaintTest` (Robolectric): merged
+  content (strokes + 9 shapes + strikethrough) paints into a PDF that
+  reopens with exact page geometry and the expected path/stroke operators.
+* The strikethrough export draws as a stroked center line through each
+  marked rect (round caps), matching the on-canvas appearance.
+* pdfium rasterization verification (`PdfVerifier`) still runs on-device
+  in the production pipeline; under JVM Robolectric the native library
+  cannot load, so unit-level export tests verify via the independent
+  pdfbox reload path instead.

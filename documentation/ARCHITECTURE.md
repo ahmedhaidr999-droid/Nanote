@@ -1,4 +1,4 @@
-# Nanote — Architecture (Part 1)
+# Nanote — Architecture (post-Part-4 integration)
 
 ## Overview
 
@@ -120,8 +120,8 @@ NotebookFormDialog (feature:notebooks)
 * **Instrumented (compiled in CI, run on device):** `AppLaunchTest` launch
   + branding smoke checks.
 * **CI:** debug build of all modules, unit tests, `:app:lintDebug`,
-  `assembleDebugAndroidTest`, signed release APK (see
-  `.github/workflows/build.yml`).
+  `assembleDebugAndroidTest`, release APK + AAB artifacts (see
+  `.github/workflows/build.yml` and `documentation/RELEASE.md`).
 
 
 ## Part 2 additions — handwriting engine layer
@@ -156,3 +156,22 @@ history + revision flows) → `ElementRenderer` (cached vector drawing) →
 
 Format v3 is fully backward compatible: every new field decodes with defaults
 from v1/v2 files, and `DocumentMigrations` walks versions step by step.
+
+## Part 4 integration notes
+
+Part 2 and Part 3 were developed **in parallel on the same Part 1 base**;
+Part 4 merged them. The seams that were reconciled:
+
+| Seam | Resolution |
+|---|---|
+| `DocumentContent` model | carries BOTH `canvasMode` (Part 2) and `strikeThroughs` (Part 3) |
+| Room schema | unchanged v3 — both lines shared an identical MIGRATION_1_2 |
+| Eraser | shape removal (Part 2) + strikethrough removal (Part 3) in one undoable batch |
+| PDF export | Part 3's `PdfContentPainter` architecture kept; Part 2's four new shape kinds ported into it |
+| Editor UI | PageStrip (Part 2, paged mode) + PagePanel/ExportSheet/PdfInfoSheet/save chip/bookmark (Part 3) coexist |
+| Settings | input behavior section (Part 2) + export/autosave/backup sections (Part 3) |
+| Menus | pages panel + canvas-mode switch; the Part 2 “export PDF” row is superseded by Part 3's export sheet |
+
+The merge is covered by dedicated integration tests
+(`MergedContentFormatTest`, `MergedContentPaintTest`) and the full 98-test
+suite passes on the merged tree.

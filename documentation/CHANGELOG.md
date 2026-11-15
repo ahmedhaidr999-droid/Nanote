@@ -2,6 +2,64 @@
 
 All notable changes to Nanote are documented here.
 
+## [1.4.0] — Part 4: final integration, QA & release preparation
+
+### Full application integration (the headline fix)
+- **Part 2 (handwriting engine, canvas & notebook editor) had never been
+  merged** — Part 3 was built on the Part 1 merge base. Part 4 integrates
+  all three parts on main: 20 overlapping files, 14 content conflicts
+  resolved semantically (models, eraser, repository, painter, menus,
+  settings, strings).
+- `DocumentContent` carries BOTH Part 2's `canvasMode` and Part 3's
+  `strikeThroughs`; snapshot/undo/redo/export cover the union.
+- The eraser commits shapes (Part 2) and strikethrough marks (Part 3) in
+  one undoable batch.
+- Part 2's four new shape kinds (double arrow, rounded rect, ellipse,
+  polygon) ported into the Part 3 export architecture
+  (`core/pdf/PdfContentPainter`).
+- Editor UI: page strip (paged mode), pages panel, export sheet, PDF info
+  sheet, canvas-mode switch, save-status chip and bookmark all coexist.
+- Settings: input behavior (finger action, pressure curve, color memory)
+  + export/autosave/backup sections merged.
+- Room schema stays v3 (both branches shared an identical
+  MIGRATION_1_2); exported schemas 2.json/3.json committed.
+
+### Security & privacy hardening
+- **Removed the committed release keystore and its passwords** from the
+  tree and gitignored all keystore patterns (they remain in git history —
+  the old key must never sign a public release; see RELEASE.md).
+- Signing now resolves from `NANOTE_*` environment variables, then an
+  untracked `keystore/keystore.properties`, else falls back to the debug
+  key (clearly labeled, never presented as a store release).
+- CI can restore the signing key from GitHub secrets
+  (`NANOTE_KEYSTORE_BASE64` + friends) and now also builds the **AAB**.
+
+### Release preparation
+- Version 1.4.0 (versionCode 5); CI-sized Gradle memory with documented
+  sandbox overrides; release job labeled honestly.
+
+### Tests
+- 6 new integration tests covering the merge seams:
+  `MergedContentFormatTest` (Part 2 + Part 3 content in one `.nanote`
+  file, legacy/part-only loads) and `MergedContentPaintTest` (merged
+  content paints into a reopenable PDF; polygon vertex paths).
+- **98 unit tests, 0 failures** (14 classes) on the merged tree; debug
+  APK, androidTest compile, release APK and AAB all build.
+
+### Documentation
+- New: `RELEASE.md`, `DATABASE_SCHEMA.md`, `HANDWRITING_ENGINE.md`,
+  `TESTING.md`. Updated: README, FEATURES (status labels), ARCHITECTURE,
+  ROADMAP. Full set: 12 files.
+
+### Honest limitations (carried and verified)
+- No physical-device QA performed in this environment — see TESTING.md
+  for the device checklist; no handwriting-performance claims are made.
+- pdfium cannot load under JVM Robolectric; export unit tests verify via
+  the independent pdfbox reload path (device pipeline re-verifies with
+  pdfium).
+- Arabic text export still uses WinAnsi-safe approximations (PDFBox
+  Type1 limitation) — unchanged, documented.
+
 ## [1.2.0] — Part 2 Handwriting Engine, Canvas & Notebook Editor
 
 ### Handwriting engine

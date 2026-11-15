@@ -113,3 +113,17 @@ editing (`DocumentModel` commands), persistence (`DocumentFormat`).
   was verified against Google/Maven metadata before pinning.
 * Mirrors: `maven.aliyun.com` repositories are kept as **fallbacks after** google()/mavenCentral()
   so builds also work from restricted networks; official repositories come first
+
+## Testing stack (as verified in Part 4)
+
+| Tool | Role |
+|---|---|
+| JUnit 4 | all unit suites |
+| Robolectric 4.13 | Android-context tests (repository, migrations, PDF ops, renderers) — runs on JVM |
+| kotlinx-coroutines-test | suspend function tests |
+| androidx.test (core-ktx / junit / espresso) | instrumented tests (compile-verified in CI, run on device) |
+| Temurin JDK 17 | build JVM (matches CI) |
+
+Part 4 verification environment: JDK 17.0.21, Android SDK 35 (build-tools
+35.0.0), Gradle 8.9 — `assembleDebug`, `assembleRelease`, `bundleRelease`
+and the full 98-test unit suite all green.

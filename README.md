@@ -1,76 +1,75 @@
 # Nanote — Premium offline notes & PDF annotation for Android tablets
 
-<p align="center"><b>v1.2.0 (Part 3 — PDF engine, storage, search & export)</b> · Kotlin · Jetpack Compose · Material 3 · MVVM + Clean Architecture · Hilt · Room · DataStore</p>
+<p align="center"><b>v1.4.0 (Part 4 — final integration, QA & release)</b> · Kotlin · Jetpack Compose · Material 3 · MVVM + Clean Architecture · Hilt · Room · DataStore</p>
 
-Nanote is a premium note-taking app with an infinite-canvas editor and a
-high-performance PDF reader/annotator, inspired by the workflows of
-Notewise, GoodNotes and Samsung Notes — with an independent **Premium Blue**
-visual identity.
+Nanote is a premium note-taking app with a custom vector handwriting
+engine and a high-performance PDF reader/annotator, inspired by the
+workflows of Notewise, GoodNotes and Samsung Notes — with an independent
+**Premium Blue** visual identity.
 
-**100% offline by design:** no cloud, no accounts, no analytics, no network
-permission. Everything lives on the device.
+**100% offline by design:** no cloud, no accounts, no analytics, no
+network permission. Everything lives on the device.
 
-* **Language:** Kotlin 2.0 — fully modular Gradle project (15 modules)
+* **Language:** Kotlin 2.0 — fully modular Gradle project (16 modules)
 * **UI:** Jetpack Compose + Material 3, custom design system, adaptive
   tablet-first shell (navigation rail ⇄ bottom bar via WindowSizeClass)
+* **Engine:** custom five-layer handwriting engine (capture → input →
+  document → geometry → rendering), fully vector end-to-end
+* **PDF:** pdfium rendering + pdfbox text/page-ops/writing; imports are
+  never modified — page operations work on a working copy
 * **Architecture:** MVVM + repository pattern, Room index + `.nanote` JSON
-  document files on disk, DataStore preferences (with migration from the
-  v1.0 SharedPreferences)
+  document files on disk, DataStore preferences
 * **i18n:** English + Arabic (full RTL), per-app language on Android 13+
 * **minSdk 26 · targetSdk 35 · light/dark/system themes + Material You + 7 accent colors**
 
 ---
 
-## Part 3 (this branch)
+## What's in the box (all four parts integrated)
 
-This is **Part 3 of 4** — the PDF engine, local storage, backup/restore,
-search and export layer on top of the Part 1 foundation:
+* **Library & documents** — grid/list views, search, sorting (modified /
+  created / alphabetical / custom), multi-selection with batch
+  move/favorite/delete, metadata sheets, recent-activity feed
+* **Notebooks & folders** — covers, icons, templates, sizes; nested
+  folders with cycle-safe moves and delete-with-lift
+* **Handwriting** — five pen engines (ballpoint, fountain, brush, pencil,
+  highlighter) with pressure/tilt capture, palm rejection, three eraser
+  modes (including bit-exact partial erase), lasso/rectangle selection
+  with move/resize/rotate, vector clipboard, grouping
+* **Canvas** — paged mode (A4/A5/Letter/Legal, 12 templates) and infinite
+  mode; rich text (6 fonts, styles, lists, bidi AR/EN), images (picker +
+  camera), 9 shape kinds with deterministic shape recognition
+* **PDF** — import via SAF, lazy rendering, bookmarks, reading positions,
+  long-press text selection (highlight/underline/strikethrough), page
+  operations (delete/duplicate/reorder/rotate/extract/insert/merge)
+* **Search** — grouped results: documents, folders, tags and matches
+  **inside PDF text** (page + snippet), with recent-search history
+* **Export** — PDF (flattened / keep-text-selectable markup / original),
+  PNG, JPEG, `.nanote`, page subsets, Android Sharesheet + Print Framework
+* **Backup** — versioned offline `.nanote-backup` archives; previewed
+  restore that never overwrites existing data
+* **Settings** — themes, accents, language, defaults, input behavior,
+  autosave, export defaults, storage, backup & restore
 
-* Repository audit of v1.0.0 (single-module app) and restructure into
-  15 Gradle modules with clean layering (see `documentation/ARCHITECTURE.md`)
-* Offline mandate enforced: **AI features and the INTERNET permission were
-  removed**; OkHttp is gone from the dependency tree
-* Complete **library & document management**: grid/list views, search,
-  sorting (modified/created/alphabetical/custom), multi-selection with batch
-  move/favorite/delete, rename/duplicate/move/delete, metadata sheets
-* **Notebook management**: create/edit with cover colour, icon, page
-  template (plain/lined/grid/dotted/Cornell), orientation and page size
-* **Nested folders** with breadcrumbs, folder tree picker, cycle-safe moves
-  and delete-with-lift (nothing is lost when a folder is removed)
-* **Recent activity feed** (new `recent_activity` table) + last-opened tracking
-* Room **v1 → v2 migration** (preserves all v1.0.0 data)
-* **DataStore** user preferences (theme, accent, language, library and
-  notebook defaults) with one-time import from v1.0 settings
-* Gradle **wrapper** added; CI builds debug + runs unit tests + lint +
-  produces the signed release APK
-* The v1.0.0 **editor is preserved and fully wired**, extended with
-  strikethrough marks, a pages panel, bookmarks and reading positions
+See `documentation/FEATURES.md` for the full feature matrix with honest
+status labels, and the deep dives: `HANDWRITING_ENGINE.md`,
+`PDF_ENGINE.md`, `STORAGE_AND_BACKUP.md`, `DATABASE_SCHEMA.md`,
+`ARCHITECTURE.md`, `TESTING.md`, `RELEASE.md`.
 
-**New in Part 3:**
+## Part 4 (this release)
 
-* **PDF engine** with separated responsibilities (pdfium rendering +
-  pdfbox text/page-ops/writing); every export is verified by reopening
-  it with an independent renderer. Imported originals are never modified —
-  page operations (delete/duplicate/reorder/rotate/extract/insert/merge)
-  work on an `edited.pdf` working copy
-* **Local search** across document titles, folders, tags and **inside PDF
-  text** (page + snippet), with recent-search suggestions and history
-* **Export & sharing**: PDF (flattened / keep-text-selectable markup
-  annotations / original), PNG, JPEG, `.nanote`, page subsets, Android
-  Sharesheet and Print Framework
-* **Backup & restore**: versioned offline `.nanote-backup` archives,
-  previewed restore that never overwrites existing data
-* **Storage**: Room v3 (tags, PDF text index, bookmarks, reading
-  positions, search history) with a unit-tested v2→v3 migration;
-  autosave preferences + editor save-status chip
-* **Privacy**: Android cloud auto-backup disabled — documents never
-  leave the device except through explicit user export
+Part 4 integrated the previously **unmerged Part 2 branch** (the
+handwriting engine) with Part 3's PDF/storage/search/export work,
+eliminated the resulting conflicts (models, eraser, export painter,
+menus, settings), hardened security and prepared the release:
 
-See `documentation/FEATURES.md` for the full feature matrix,
-`documentation/PDF_ENGINE.md` and `documentation/STORAGE_AND_BACKUP.md`
-for the deep dives, and `documentation/ROADMAP.md` for Part 4.
-
----
+* Part 2's 4 new shape kinds ported into the Part 3 export painter
+* Committed release keystore + passwords **removed** from the tree;
+  env-var/secret-based signing with a debug-signed CI fallback
+* CI builds **APK + AAB** artifacts and can restore the signing key from
+  GitHub secrets (see `documentation/RELEASE.md`)
+* Room schemas v2/v3 committed; version 1.4.0 (versionCode 5)
+* 6 new integration tests covering the merge seams; **98 unit tests green**
+* Full documentation set (12 files)
 
 ## Building
 
@@ -86,19 +85,18 @@ echo "sdk.dir=/path/to/android-sdk" > local.properties
 ./gradlew assembleDebug
 # → app/build/outputs/apk/debug/app-debug.apk
 
-# Unit tests
-./gradlew testDebugUnitTest :core:model:test :core:storage:test
+# Unit tests (98)
+./gradlew testDebugUnitTest :core:model:test :core:storage:test --continue
 
-# Signed release APK (test keystore included — replace for production)
-./gradlew assembleRelease
+# Release artifacts (R8; see documentation/RELEASE.md for signing)
+./gradlew assembleRelease bundleRelease
 ```
 
-The signing keystore lives in `keystore/` (test key) — **replace it with
-your own for production and never commit a real release key.**
+Release signing credentials are **never committed** — see
+`documentation/RELEASE.md` for the secure setup (local properties file,
+environment variables or GitHub secrets).
 
 To open in Android Studio: **File → Open** on the project root.
-
----
 
 ## Project layout
 
@@ -106,23 +104,32 @@ To open in Android Studio: **File → Open** on the project root.
 app/                     # single-activity shell: adaptive nav, NavHost, DI
 core/
 ├── common/              # dispatchers, app-scope, logging
-├── model/               # domain models (documents, folders, prefs, sorting)
+├── model/               # domain models + stroke geometry (StrokeOps, shapes)
 ├── navigation/          # route constants
 ├── design/              # NanoteTheme + shared Compose components + strings
-├── database/            # Room: entities, DAOs, v1→v2 migration
-├── storage/             # .nanote file format + migrations
-├── data/                # repositories (Room + files), DataStore prefs
-├── graphics/            # ink canvas engine (Part 2 foundation)
-└── pdf/                 # pdfium renderer + pdfbox text layer
+├── database/            # Room: entities, DAOs, v1→v2→v3 migrations, schemas
+├── storage/             # .nanote format v3 + migrations + backup format
+├── data/                # repositories (Room + files), settings stores
+├── graphics/            # handwriting engine (canvas, tools, selection, clipboard)
+└── pdf/                 # pdfium renderer + pdfbox text/page-ops/export painter
 feature/
-├── home/                # dashboard: recents, favorites, folders, activity
+├── home/                # dashboard: recents, favorites, grouped search, activity
 ├── library/             # document browser (filters, selection, sort)
 ├── notebooks/           # notebook form (cover/icon/template/size)
 ├── folders/             # nested folder browser
-├── settings/            # appearance, defaults, storage, about
-└── editor/              # the canvas editor (from v1.0.0, AI removed)
-documentation/           # architecture, tech stack, features, roadmap
+├── settings/            # appearance, input, defaults, export, backup, storage
+└── editor/              # the canvas editor: toolbar, pages panel, export sheet
+documentation/           # 12 documentation files
 ```
+
+## Privacy
+
+* No `INTERNET` permission — the app **cannot** transmit documents
+* Camera + vibrate only; camera is used solely for inserting photos
+* Android cloud auto-backup disabled (`allowBackup=false` + full data
+  exclusion rules) — documents leave the device only through explicit
+  user-initiated export or local backup archives
+* No crash reporting, no analytics, no AI, no accounts
 
 ## Diagnostics
 
