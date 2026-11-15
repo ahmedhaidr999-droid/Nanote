@@ -78,11 +78,79 @@
 - [x] Notewise-style customizable toolbar
 - [x] “Open PDF” intent from file managers (now imports + opens via the new shell)
 
-## What Part 1 does NOT include (honest scope)
+## Part 3 (this release, v1.2.0) — PDF engine, local storage, search & export
 
-- Handwriting engine **rework** — Part 2 (current engine preserved as-is)
-- PDF features beyond v1.0.0 — Part 4
-- Drag-and-drop reorder gestures (custom order is via move up/down actions)
+### PDF engine (five separated responsibilities)
+- [x] Rendering: pdfium-android (lazy, cached, gesture-safe)
+- [x] Text extraction: pdfbox-android (per page, word boxes for selection)
+- [x] Annotations: Nanote vector model painted over rendered pages
+- [x] Page operations: pdfbox (delete / duplicate / reorder / rotate / extract / insert / merge)
+- [x] Exporting: pdfbox writing + pdfium verification — every exported PDF is reopened with an independent renderer before being reported as successful
+- [x] `original.pdf` (imported source) is **never modified**; page operations write an `edited.pdf` working copy
+
+### PDF import & viewer
+- [x] SAF import with no broad storage permission; file size + source name recorded
+- [x] Page count, metadata sheet (title / author / creator / producer when present)
+- [x] Thumbnails, page-by-page navigation, jump-to-page, zoom / fit width / fit page
+- [x] Bookmarks: toggle on the current page, list in the pages panel, jump & delete
+- [x] Reading position (page + zoom) persisted per document and restored on open
+
+### PDF annotation & text selection
+- [x] Handwriting (pen / pencil / brush / highlighter with pressure), eraser, lasso, shapes, images, text boxes — integrated from the Part 2-era engine
+- [x] Long-press word selection with drag handles on text-based pages
+- [x] Copy / highlight / underline / **strikethrough** (new) from the selection menu
+- [x] Scanned pages and handwritten ink are distinguished from selectable text (no OCR claimed)
+
+### Page management
+- [x] Delete / duplicate / rotate / move pages (with confirmations, working copy only)
+- [x] Insert all pages of another picked PDF at the current position
+- [x] Extract selected pages into a new document (split)
+- [x] Text search index rebuilt automatically after page operations
+
+### Export & sharing
+- [x] Export sheet: PDF (flattened / markup annotations / original), PNG, JPEG, .nanote
+- [x] Page-subset export for PDFs
+- [x] Android Sharesheet (FileProvider) and Android Print Framework
+- [x] Notebook pages render offscreen (template + ink + images + text) for raster export
+- [x] Exports are never screenshots — real content streams via pdfbox
+
+### Local storage, autosave, backup
+- [x] Room v3: tags, PDF text index, bookmarks, reading positions, search history (migration v2→v3 unit-tested)
+- [x] Autosave: enable/disable + adjustable debounce in Settings; save-status chip in the editor; final save always runs on exit
+- [x] Document tagging with usage counts; tags searchable
+- [x] Versioned offline `.nanote-backup` ZIP format (manifest + index rows + files)
+- [x] Full backup to any SAF location; restore with preview dialog; duplicate names resolve to "(Restored)"; nothing existing is overwritten
+- [x] Android cloud auto-backup disabled (`allowBackup=false` + exclusion rules) — documents never leave the device except through explicit user export
+
+### Search
+- [x] Grouped results: documents, folders, tags and **inside PDF text** (page + snippet)
+- [x] Tapping a PDF text hit opens the document
+- [x] Recent searches as suggestion chips; per-entry removal and clear-all
+
+### Settings (new sections)
+- [x] Default export format + default PDF annotations mode
+- [x] PDF render quality (low / balanced / high), autosave preferences
+- [x] Backup & restore panel with progress + result reporting
+- [x] Storage usage + thumbnail cache cleanup (unchanged from Part 1)
+
+### Tests added in Part 3
+- [x] `BackupFormatTest` — round-trip, future-version rejection, partial archives (JVM)
+- [x] `PdfPageOpsTest` — delete/duplicate/reorder/rotate/extract/insert/merge verified by reopening results (Robolectric)
+- [x] `Part3ModelTest` — strikethrough serialization round-trip + command semantics
+- [x] `MigrationTest` v2→v3 — data preservation + all new tables
+- [x] `DocumentRepositoryImplTest` — tags, search history, bookmarks, reading positions
+
+
+## Honest scope & known limitations
+
+- Arabic text boxes export as WinAnsi-safe approximations (PDFBox Type1
+  fonts cannot shape Arabic — needs an embedded font + layout engine)
+- Scanned PDFs are not text-searchable and no OCR is performed or claimed
+- Markup annotation opacity is approximated by colour blending
+- Per-notebook backup selection exists in the engine; the UI ships full backup
+- End-to-end restore into an independent install is automated-test covered,
+  not device-verified in this environment (Part 4 QA)
+- Drag-and-drop page reorder uses move up/down actions instead of gestures
 - Phone-specific layouts beyond the compact bottom bar
 - Trash/undo for deletions (confirmations instead)
 

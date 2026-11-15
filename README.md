@@ -1,6 +1,6 @@
 # Nanote — Premium offline notes & PDF annotation for Android tablets
 
-<p align="center"><b>v1.1.0 (Part 1 Foundation)</b> · Kotlin · Jetpack Compose · Material 3 · MVVM + Clean Architecture · Hilt · Room · DataStore</p>
+<p align="center"><b>v1.2.0 (Part 3 — PDF engine, storage, search & export)</b> · Kotlin · Jetpack Compose · Material 3 · MVVM + Clean Architecture · Hilt · Room · DataStore</p>
 
 Nanote is a premium note-taking app with an infinite-canvas editor and a
 high-performance PDF reader/annotator, inspired by the workflows of
@@ -21,9 +21,10 @@ permission. Everything lives on the device.
 
 ---
 
-## Part 1 (this branch)
+## Part 3 (this branch)
 
-This is **Part 1 of 4** — the project foundation:
+This is **Part 3 of 4** — the PDF engine, local storage, backup/restore,
+search and export layer on top of the Part 1 foundation:
 
 * Repository audit of v1.0.0 (single-module app) and restructure into
   15 Gradle modules with clean layering (see `documentation/ARCHITECTURE.md`)
@@ -42,11 +43,32 @@ This is **Part 1 of 4** — the project foundation:
   notebook defaults) with one-time import from v1.0 settings
 * Gradle **wrapper** added; CI builds debug + runs unit tests + lint +
   produces the signed release APK
-* The v1.0.0 **editor is preserved and fully wired** (see editor route) —
-  the Part 2 handwriting engine will upgrade it in place
+* The v1.0.0 **editor is preserved and fully wired**, extended with
+  strikethrough marks, a pages panel, bookmarks and reading positions
 
-See `documentation/FEATURES.md` for the full feature matrix and
-`documentation/ROADMAP.md` for Parts 2–4.
+**New in Part 3:**
+
+* **PDF engine** with separated responsibilities (pdfium rendering +
+  pdfbox text/page-ops/writing); every export is verified by reopening
+  it with an independent renderer. Imported originals are never modified —
+  page operations (delete/duplicate/reorder/rotate/extract/insert/merge)
+  work on an `edited.pdf` working copy
+* **Local search** across document titles, folders, tags and **inside PDF
+  text** (page + snippet), with recent-search suggestions and history
+* **Export & sharing**: PDF (flattened / keep-text-selectable markup
+  annotations / original), PNG, JPEG, `.nanote`, page subsets, Android
+  Sharesheet and Print Framework
+* **Backup & restore**: versioned offline `.nanote-backup` archives,
+  previewed restore that never overwrites existing data
+* **Storage**: Room v3 (tags, PDF text index, bookmarks, reading
+  positions, search history) with a unit-tested v2→v3 migration;
+  autosave preferences + editor save-status chip
+* **Privacy**: Android cloud auto-backup disabled — documents never
+  leave the device except through explicit user export
+
+See `documentation/FEATURES.md` for the full feature matrix,
+`documentation/PDF_ENGINE.md` and `documentation/STORAGE_AND_BACKUP.md`
+for the deep dives, and `documentation/ROADMAP.md` for Part 4.
 
 ---
 
